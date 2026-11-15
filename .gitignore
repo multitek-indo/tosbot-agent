@@ -1,0 +1,45 @@
+# Production secrets and state
+.env
+.env.*
+!.env.example
+**/tosbot.env
+*auth*.json
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.kdbx
+*.bak
+*.backup
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+# Personal visual assets and generated customer documents
+assets/*.png
+assets/*.jpg
+assets/*.jpeg
+assets/*.webp
+examples/*.pdf
+*.xlsx
+*.xls
+*.pdf
+# Backup bundles / old ZIP releases / exports
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+backups/
+exports/
+output/

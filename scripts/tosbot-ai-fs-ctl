@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Root-owned filesystem wrapper. Fixed home root, no command shell, no file content reads.
+
+Operation mkdir creates ONE child only below /home/tosbot or /home/tosbot/script.
+Prevent traversal, symlink escape, hidden files and modifications to existing files.
+"""
+from __future__ import annotations
+import json
+import os
+import pwd
+import re
+import stat
+import sys
+from pathlib import Path
+
+VISIBLE_ROOT = '/home/tosbot'
+BOUND_ROOT = Path('/run/tosbot-home')
+MAX_ENTRIES = 75
+MAX_DEPTH = 2
+
+
+def normalized_relative(path: str) -> tuple[str, ...]:
+    raw = str(path).strip().rstrip('/') or VISIBLE_ROOT
+    if raw == VISIBLE_ROOT:
+        return ()
+    if not raw.startswith(VISIBLE_ROOT + '/'):
+        raise ValueError('Path di luar /home/tosbot tidak diizinkan')
+    parts = raw[len(VISIBLE_ROOT)+1:].split('/')
+    if len(parts) > 8 or any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,79}', p) or p in ('.','..') for p in parts):
+        raise ValueError('Path mengandung karakter atau traversal yang tidak diizinkan')
+    return tuple(parts)
+
+
+def _open_dir(root: Path, rel: tuple[str,...]) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(root, flags)
+    try:
+        for name in rel:
+            nxt = os.open(name, flags, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _entries(fd: int) -> list[dict]:
+    out = []
+    with os.scandir(fd) as stream:
+        for ent in stream:
+            if ent.name.startswith('.') or ent.is_symlink():
+                continue
+            try:
+                ty = 'directory' if ent.is_dir(follow_symlinks=False) else 'file'
+            except OSError:
+                continue
+            safe = ''.join(c if c.isprintable() and c not in ('\n','\r') else '?' for c in ent.name)
+            out.append({'name': safe[:120], 'type': ty})
+            if len(out) >= 1000:
+                break
+    out.sort(key=lambda x: (x['type'] != 'directory', x['name'].casefold()))
+    return out
+
+
+def scan(root: Path, path: str, op: str) -> dict:
+    if op not in ('list','count','tree'):
+        raise ValueError('Operasi tidak didukung')
+    rel = normalized_relative(path)
+    fd = _open_dir(root, rel)
+    try:
+        visible = VISIBLE_ROOT + ('/'+'/'.join(rel) if rel else '')
+        if op == 'tree':
+            lines = []
+            def walk(parent_fd: int, depth: int) -> None:
+                if depth > MAX_DEPTH or len(lines) >= MAX_ENTRIES: return
+                for ent in _entries(parent_fd):
+                    if len(lines) >= MAX_ENTRIES: break
+                    lines.append('  '*depth+('📁 ' if ent['type']=='directory' else '📄 ')+ent['name'])
+                    if ent['type']=='directory' and depth<MAX_DEPTH:
+                        flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC
+                        try: child=os.open(ent['name'], flags, dir_fd=parent_fd)
+                        except OSError: continue
+                        try: walk(child,depth+1)
+                        finally: os.close(child)
+            walk(fd,0)
+            return {'ok':True,'path':visible,'tree':lines,'truncated':len(lines)>=MAX_ENTRIES}
+        entries = _entries(fd)
+        return {'ok':True,'path':visible,'directories':sum(e['type']=='directory' for e in entries),
+                'files':sum(e['type']=='file' for e in entries),
+                'entries':entries[:MAX_ENTRIES] if op=='list' else [], 'truncated':len(entries)>MAX_ENTRIES}
+    finally:
+        os.close(fd)
+
+
+def make_dir(root: Path, path: str, owner: str | None = 'tosbot') -> dict:
+    rel=normalized_relative(path)
+    # Only one new child at home or direct child of /home/tosbot/script.
+    if len(rel) == 1:
+        parent_rel=()
+    elif len(rel)==2 and rel[0]=='script':
+        parent_rel=('script',)
+    else:
+        raise ValueError('Membuat folder hanya di /home/tosbot atau /home/tosbot/script')
+    name=rel[-1]
+    if name in {'.','..'} or name.startswith('.') or name.lower() in {'root','.ssh'}:
+        raise ValueError('Nama folder tidak diizinkan')
+    account = pwd.getpwnam(owner) if owner else None  # resolve before creating anything
+    parent_fd=_open_dir(root,parent_rel)
+    try:
+        try:
+            existing=os.stat(name,dir_fd=parent_fd,follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISDIR(existing.st_mode):
+                raise ValueError('Nama sudah digunakan oleh file atau symlink')
+            return {'ok':True,'exists':True,'path':path}
+        os.mkdir(name,0o750,dir_fd=parent_fd)
+        if account:
+            os.chown(name,account.pw_uid,account.pw_gid,dir_fd=parent_fd,follow_symlinks=False)
+        return {'ok':True,'exists':False,'path':path}
+    finally:
+        os.close(parent_fd)
+
+
+def main() -> int:
+    if len(sys.argv)!=3:
+        print(json.dumps({'ok':False,'error':'Gunakan operasi dan path'})); return 2
+    op,path=sys.argv[1:]
+    try:
+        result = make_dir(BOUND_ROOT,path) if op=='mkdir' else scan(BOUND_ROOT,path,op)
+        print(json.dumps(result,ensure_ascii=False));return 0
+    except (OSError,ValueError,KeyError) as exc:
+        print(json.dumps({'ok':False,'error':str(exc)[:180]},ensure_ascii=False));return 1
+
+if __name__=='__main__': raise SystemExit(main())

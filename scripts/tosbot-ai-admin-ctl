@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""Root-owned job broker for TosBot. Never execute arbitrary root commands without TOTP session.
+
+Install as root:root 0755, invoke as 'sudo -n tosbot-ai-admin-ctl <action>'.
+All input to open/submit/close is a small JSON packet on STDIN; no shell substitutions.
+Only 'setup'/'disable' may be invoked from a real admin terminal (not bot account).
+"""
+from __future__ import annotations
+import base64
+import hashlib
+import hmac
+import json
+import os
+import pwd
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CFG = Path('/etc/tosbot-ai/admin-auth.json')
+ROOT = Path('/var/lib/tosbot-ai-admin/jobs')
+SESSIONS = Path('/run/tosbot-ai-admin/sessions')
+ACCOUNT = 'tosbot-ai'
+TERMINAL_ACCOUNT = 'tosbot-terminal'
+JOB_ID = re.compile(r'^[0-9a-f]{20}$')
+SESSION_LIFETIME = 300
+MAX_CMD = 2048
+
+
+def output(**kwargs) -> None:
+    print(json.dumps(kwargs, ensure_ascii=False), flush=True)
+
+
+def read_packet() -> dict:
+    # Bounded read so untrusted chat cannot make the privileged helper load unlimited input.
+    chunk = sys.stdin.buffer.read(8193)
+    if len(chunk) > 8192:
+        raise ValueError('Request terlalu panjang')
+    obj = json.loads(chunk.decode('utf-8'))
+    if not isinstance(obj, dict):
+        raise ValueError('Request tidak valid')
+    return obj
+
+
+def secure_dir(path: Path):
+    path.mkdir(parents=True, exist_ok=True)
+    os.chown(path, 0, 0)
+    os.chmod(path, 0o700)
+
+
+def write_json(path: Path, value: dict):
+    # Parent directories must be root:root 0700. Not reachable by the Telegram process.
+    temp = path.with_name(path.name + '.' + secrets.token_hex(6) + '.tmp')
+    with temp.open('x', encoding='utf-8') as f:
+        os.fchmod(f.fileno(), 0o600)
+        json.dump(value, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp, path)
+
+
+def read_json(path: Path) -> dict:
+    with path.open('r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def is_bot() -> bool:
+    return os.environ.get('SUDO_USER') == ACCOUNT
+
+
+def real_admin_only():
+    if is_bot():
+        raise PermissionError('Setup/disable hanya melalui terminal admin VPS, bukan Telegram')
+
+
+def bot_only():
+    if not is_bot():
+        raise PermissionError('Aksi ini hanya dipanggil service TosBot')
+
+
+def current_totp(key: str, counter: int) -> str:
+    secret = base64.b32decode(key, casefold=True)
+    digest = hmac.new(secret, counter.to_bytes(8, 'big'), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0f
+    val = (int.from_bytes(digest[offset:offset+4], 'big') & 0x7fffffff) % 1_000_000
+    return f'{val:06d}'
+
+
+def setup():
+    real_admin_only()
+    # The bot must keep read access to the environment file (root:tosbot-ai 0750).
+    # Only the TOTP secret file is root-only; do not chmod the shared config directory.
+    CFG.parent.mkdir(parents=True, exist_ok=True)
+    if CFG.exists():
+        return output(ok=False, error='TOTP sudah dibuat. Untuk mengganti, jalankan disable dahulu dari SSH.')
+    key = base64.b32encode(secrets.token_bytes(20)).decode().rstrip('=')
+    write_json(CFG, {'key': key, 'last_step': -1, 'fail_since': 0, 'fail_count': 0})
+    print('SIMPAN KUNCI INI LANGSUNG DI AUTHENTICATOR. JANGAN KIRIM KE TELEGRAM.\n')
+    print('TOTP key:', key)
+    print('Issuer: TosBot VPS  |  Account: admin')
+    print('Tambahkan sebagai TOTP 6 digit (SHA1, periode 30 detik).')
+    print('Jam server harus sinkron (timedatectl).')
+
+
+def disable():
+    real_admin_only()
+    CFG.unlink(missing_ok=True)
+    if SESSIONS.exists():
+        for f in SESSIONS.glob('*.json'):
+            f.unlink(missing_ok=True)
+    output(ok=True, disabled=True)
+
+
+def verify_totp(code: str):
+    if not re.fullmatch(r'[0-9]{6}', code):
+        raise PermissionError('Kode authenticator harus 6 digit')
+    if not CFG.is_file():
+        raise PermissionError('Admin TOTP belum diaktifkan via SSH')
+    cfg = read_json(CFG)
+    now = int(time.time())
+    if now - cfg.get('fail_since', 0) >= 600:
+        cfg['fail_since'], cfg['fail_count'] = now, 0
+    if cfg.get('fail_count', 0) >= 5:
+        raise PermissionError('Percobaan TOTP dibatasi. Tunggu 10 menit atau cek lewat SSH.')
+    step = now // 30
+    matched = next((i for i in (step-1, step, step+1)
+                    if i > cfg.get('last_step', -1)
+                    and hmac.compare_digest(current_totp(cfg['key'], i), code)), None)
+    if matched is None:
+        cfg['fail_count'] = cfg.get('fail_count', 0) + 1
+        write_json(CFG, cfg)
+        raise PermissionError('Kode TOTP salah/kedaluwarsa')
+    cfg['last_step'] = matched
+    cfg['fail_count'] = 0
+    write_json(CFG, cfg)
+
+
+def session_path(token: str) -> Path:
+    if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{30,90}', token):
+        raise PermissionError('Sesi tidak valid')
+    return SESSIONS / (hashlib.sha256(token.encode('utf-8')).hexdigest() + '.json')
+
+
+def session_ok(token: str) -> bool:
+    try:
+        path = session_path(token)
+    except PermissionError:
+        return False
+    if not path.exists():
+        return False
+    doc = read_json(path)
+    if time.time() > doc.get('expires', 0):
+        path.unlink(missing_ok=True)
+        return False
+    return True
+
+
+def open_session():
+    bot_only()
+    packet = read_packet()
+    verify_totp(str(packet.get('code', '')))
+    secure_dir(SESSIONS)
+    token = secrets.token_urlsafe(32)
+    write_json(session_path(token), {'expires': int(time.time()) + SESSION_LIFETIME})
+    output(ok=True, session=token, expires_in=SESSION_LIFETIME)
+
+
+def close_session():
+    bot_only()
+    packet = read_packet()
+    try:
+        session_path(str(packet.get('session', ''))).unlink(missing_ok=True)
+    except PermissionError:
+        pass
+    output(ok=True)
+
+
+def valid_command(cmd: object) -> str:
+    if not isinstance(cmd, str) or not (1 <= len(cmd) <= MAX_CMD):
+        raise ValueError('Perintah harus teks 1–2048 karakter')
+    if '\x00' in cmd or '\r' in cmd or '\n' in cmd:
+        raise ValueError('Perintah multi-baris tidak didukung di Telegram')
+    return cmd.strip()
+
+
+def valid_cwd(s: object) -> str:
+    if not isinstance(s, str) or not s.startswith('/') or len(s) > 250 or '\x00' in s or '\n' in s:
+        raise ValueError('Direktori kerja harus path absolut')
+    return s
+
+
+def submit():
+    bot_only()
+    packet = read_packet()
+    mode = packet.get('mode')
+    if mode not in ('limited', 'root'):
+        raise ValueError('Mode tidak valid')
+    if mode == 'root' and not session_ok(str(packet.get('session',''))):
+        raise PermissionError('Sesi root tidak ada/kedaluwarsa; kirim sudo su dan autentikasi ulang')
+    command = valid_command(packet.get('command'))
+    cwd = valid_cwd(packet.get('cwd', '/home'))
+    jobid = secrets.token_hex(10)
+    secure_dir(ROOT)
+    spec = {'id': jobid, 'mode': mode, 'command': command,
+            'cwd': cwd, 'state': 'queued', 'started_at': int(time.time()), 'exit_code': None}
+    path = ROOT / (jobid + '.json')
+    write_json(path, spec)
+    unit = 'tosbot-admin-' + jobid
+    call = ['/usr/bin/systemd-run', '--no-block', '--unit', unit,
+            '--property=Type=exec', '--property=RuntimeMaxSec=3600',
+            '--property=LimitNOFILE=1024', '--property=UMask=0077',
+            '/usr/local/sbin/tosbot-ai-admin-ctl', 'worker', jobid]
+    run = subprocess.run(call, capture_output=True, text=True, timeout=15)
+    if run.returncode:
+        spec['state'] = 'failed'
+        spec['exit_code'] = run.returncode
+        write_json(path, spec)
+        raise RuntimeError('Tidak dapat menjalankan unit systemd; cek journalctl / systemd-run')
+    output(ok=True, job_id=jobid, state='queued', mode=mode)
+
+
+def worker(jobid: str):
+    # systemd-run invokes this without a caller identity; direct sudo from bot must fail.
+    if is_bot() or not JOB_ID.fullmatch(jobid):
+        raise PermissionError('Worker tidak dapat dipanggil dari Telegram')
+    spec_path = ROOT / (jobid + '.json')
+    spec = read_json(spec_path)
+    if spec.get('id') != jobid or spec.get('state') != 'queued':
+        raise ValueError('Job tidak dalam state queued')
+    mode = spec['mode']
+    spec['state'] = 'running'
+    write_json(spec_path, spec)
+    cwd = spec['cwd']
+    cmd = spec['command']
+    env = {'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+           'LANG': 'C.UTF-8', 'TERM': 'dumb', 'DEBIAN_FRONTEND': 'noninteractive'}
+    args = {'cwd': cwd, 'env': env, 'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT,
+            'text': True, 'errors': 'replace'}
+    if mode == 'limited':
+        p = pwd.getpwnam(TERMINAL_ACCOUNT)
+        args.update(user=p.pw_uid, group=p.pw_gid, extra_groups=[])
+        env['HOME'] = p.pw_dir
+    elif mode == 'root':
+        env['HOME'] = '/root'
+    else:
+        raise ValueError('Mode tidak valid di job')
+    rc = 127
+    output_path = ROOT / (jobid + '.log')
+    # Root-only 0600 output; it must NOT be printed to journalctl, since an
+    # administrator may inspect secrets in a root command.
+    with output_path.open('x', encoding='utf-8') as logfile:
+        os.fchmod(logfile.fileno(), 0o600)
+        try:
+            proc = subprocess.Popen(['/bin/bash', '-c', cmd], **args)
+            total = 0
+            with proc.stdout:
+                for line in proc.stdout:
+                    if total < 512_000:
+                        emitted = line[:max(0, 512_000-total)]
+                        logfile.write(emitted)
+                        logfile.flush()
+                        total += len(emitted)
+            rc = proc.wait()
+        except Exception as exc:
+            logfile.write(f'Gagal menjalankan perintah: {type(exc).__name__}\n')
+            logfile.flush()
+        finally:
+            spec['state'] = 'done' if rc == 0 else 'failed'
+            spec['exit_code'] = rc
+            spec['completed_at'] = int(time.time())
+            write_json(spec_path, spec)
+    raise SystemExit(rc if 0 <= rc <= 125 else 1)
+
+
+def status(jobid: str):
+    bot_only()
+    if not JOB_ID.fullmatch(jobid):
+        raise ValueError('ID job tidak valid')
+    spec = read_json(ROOT / (jobid + '.json'))
+    packet = read_packet()
+    # Root command output may contain passwords/private files; do not reveal it
+    # to a bot whose Telegram token was compromised but which lacks TOTP.
+    can_show_output = spec.get('mode') != 'root' or session_ok(str(packet.get('session','')))
+    # Output is stored in a root:root 0600 job log, never in systemd's journal.
+    tail = ''
+    if can_show_output:
+        log_path = ROOT / (jobid + '.log')
+        if log_path.exists():
+            with log_path.open('rb') as f:
+                f.seek(0, 2)
+                size = f.tell()
+                f.seek(max(0, size - 4000))
+                tail = f.read(4000).decode('utf-8', errors='replace')[-3500:]
+    state = spec['state']
+    if state in ('queued','running') and time.time()-spec.get('started_at',0) > 3650:
+        state='timed_out'
+    output(ok=True, job_id=jobid, state=state, exit_code=spec['exit_code'],
+           output=tail, locked=(not can_show_output), completed_at=spec.get('completed_at'))
+
+
+def main():
+    if os.geteuid() != 0:
+        raise PermissionError('Helper harus dijalankan sebagai root melalui sudo/systemd')
+    if len(sys.argv) < 2:
+        raise ValueError('Aksi tidak diberikan')
+    action = sys.argv[1]
+    if action in ('setup', 'disable') and len(sys.argv) == 2:
+        return setup() if action == 'setup' else disable()
+    if action == 'open' and len(sys.argv) == 2:
+        return open_session()
+    if action == 'close' and len(sys.argv) == 2:
+        return close_session()
+    if action == 'submit' and len(sys.argv) == 2:
+        return submit()
+    if action == 'status' and len(sys.argv) == 3:
+        return status(sys.argv[2])
+    if action == 'worker' and len(sys.argv) == 3:
+        return worker(sys.argv[2])
+    raise ValueError('Aksi tidak diizinkan')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (PermissionError, ValueError, OSError, json.JSONDecodeError, RuntimeError) as exc:
+        output(ok=False, error=str(exc)[:220])
+        raise SystemExit(1)

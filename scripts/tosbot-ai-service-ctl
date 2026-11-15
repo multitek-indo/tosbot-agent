@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Root-owned tightly restricted systemd restart helper.
+
+This is deliberately NOT a generic shell or a generic systemctl wrapper.
+Allowed units are read from a root-owned file in /etc (the bot user cannot edit it).
+"""
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ALLOW=Path('/etc/tosbot-ai/allowed-services.txt')
+DENY={'ssh','sshd','tailscaled','networking','NetworkManager','systemd-networkd',
+      'tosbot-ai','ufw','firewalld','docker','containerd','dbus','systemd-logind'}
+VALID=re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.@-]{0,80}$')
+
+def main()->int:
+    if len(sys.argv)!=3 or sys.argv[1]!='restart':return 64
+    unit=sys.argv[2]
+    if not VALID.fullmatch(unit) or unit in DENY:return 77
+    try:
+        stat=ALLOW.stat()
+        if stat.st_uid!=0 or stat.st_mode & 0o022:return 77
+        allowed={x.strip() for x in ALLOW.read_text().splitlines() if x.strip() and not x.startswith('#')}
+        if unit not in allowed:return 77
+        result=subprocess.run(['/usr/bin/systemctl','restart','--',unit],timeout=30,check=False)
+        return result.returncode
+    except (OSError,subprocess.TimeoutExpired):return 70
+
+if __name__=='__main__':sys.exit(main())
