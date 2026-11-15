@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 CFG = Path('/etc/tosbot-ai/admin-auth.json')
+TRUSTED_GROUPS = Path('/etc/tosbot-ai/trusted-groups.json')
 ROOT = Path('/var/lib/tosbot-ai-admin/jobs')
 SESSIONS = Path('/run/tosbot-ai-admin/sessions')
 ACCOUNT = 'tosbot-ai'
@@ -178,6 +179,28 @@ def close_session():
     output(ok=True)
 
 
+def trusted_group_id(packet: dict) -> int:
+    """A root-owned, explicit opt-in is needed. Group membership and sender
+    identity are verified by the Telegram message router, not inferred by AI.
+    WARNING: this mode grants every accepted member full VPS root access.
+    """
+    try:
+        st = TRUSTED_GROUPS.lstat()
+        if st.st_uid != 0 or (st.st_mode & 0o077) or not TRUSTED_GROUPS.is_file():
+            raise PermissionError('File izin trusted group harus root:root mode 0600')
+        cfg = read_json(TRUSTED_GROUPS)
+        group_id = int(packet.get('group_id', 0))
+        actor = int(packet.get('actor_id', 0))
+        if actor <= 0 or group_id >= 0 or cfg.get('enabled') is not True:
+            raise PermissionError('Trusted group admin tidak diaktifkan')
+        allowed = cfg.get('group_ids', [])
+        if not isinstance(allowed, list) or group_id not in allowed:
+            raise PermissionError('ID grup tidak diizinkan untuk akses root')
+        return group_id
+    except (OSError, ValueError, TypeError):
+        raise PermissionError('Konfigurasi trusted group belum tersedia/valid')
+
+
 def valid_command(cmd: object) -> str:
     if not isinstance(cmd, str) or not (1 <= len(cmd) <= MAX_CMD):
         raise ValueError('Perintah harus teks 1–2048 karakter')
@@ -192,13 +215,14 @@ def valid_cwd(s: object) -> str:
     return s
 
 
-def submit():
+def submit(trusted_group=False):
     bot_only()
     packet = read_packet()
+    group_id = trusted_group_id(packet) if trusted_group else None
     mode = packet.get('mode')
     if mode not in ('limited', 'root'):
         raise ValueError('Mode tidak valid')
-    if mode == 'root' and not session_ok(str(packet.get('session',''))):
+    if mode == 'root' and not trusted_group and not session_ok(str(packet.get('session',''))):
         raise PermissionError('Sesi root tidak ada/kedaluwarsa; kirim sudo su dan autentikasi ulang')
     command = valid_command(packet.get('command'))
     cwd = valid_cwd(packet.get('cwd', '/home'))
@@ -206,6 +230,9 @@ def submit():
     secure_dir(ROOT)
     spec = {'id': jobid, 'mode': mode, 'command': command,
             'cwd': cwd, 'state': 'queued', 'started_at': int(time.time()), 'exit_code': None}
+    if trusted_group:
+        spec['trusted_group'] = group_id
+        spec['group_actor_id'] = int(packet['actor_id'])
     path = ROOT / (jobid + '.json')
     write_json(path, spec)
     unit = 'tosbot-admin-' + jobid
@@ -275,15 +302,19 @@ def worker(jobid: str):
     raise SystemExit(rc if 0 <= rc <= 125 else 1)
 
 
-def status(jobid: str):
+def status(jobid: str, trusted_group=False):
     bot_only()
     if not JOB_ID.fullmatch(jobid):
         raise ValueError('ID job tidak valid')
     spec = read_json(ROOT / (jobid + '.json'))
     packet = read_packet()
+    if trusted_group:
+        group_id = trusted_group_id(packet)
+        if spec.get('trusted_group') != group_id:
+            raise PermissionError('Job bukan milik trusted group ini')
     # Root command output may contain passwords/private files; do not reveal it
     # to a bot whose Telegram token was compromised but which lacks TOTP.
-    can_show_output = spec.get('mode') != 'root' or session_ok(str(packet.get('session','')))
+    can_show_output = trusted_group or spec.get('mode') != 'root' or session_ok(str(packet.get('session','')))
     # Output is stored in a root:root 0600 job log, never in systemd's journal.
     tail = ''
     if can_show_output:
@@ -315,8 +346,12 @@ def main():
         return close_session()
     if action == 'submit' and len(sys.argv) == 2:
         return submit()
+    if action == 'group-submit' and len(sys.argv) == 2:
+        return submit(trusted_group=True)
     if action == 'status' and len(sys.argv) == 3:
         return status(sys.argv[2])
+    if action == 'group-status' and len(sys.argv) == 3:
+        return status(sys.argv[2], trusted_group=True)
     if action == 'worker' and len(sys.argv) == 3:
         return worker(sys.argv[2])
     raise ValueError('Aksi tidak diizinkan')

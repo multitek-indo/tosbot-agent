@@ -1,6 +1,6 @@
 # Publishing this source to GitHub (owner action required)
 
-**Destination:** `git@github.com:multitek-indo/tosbot-agent.git` (public and initially empty, per owner screenshot). This archive is prepared locally; no GitHub push has occurred.
+**Destination:** `git@github.com:multitek-indo/tosbot-agent.git`. This archive is prepared locally; no GitHub push has been performed by this build. The remote may already contain earlier releases; verify before publishing.
 
 ## First push
 
@@ -11,7 +11,7 @@
 
 The remote must be empty or ready to fast-forward from your local repository. If it contains unrelated commits, stop and reconcile; do not force push.
 
-## Next release (`v1.9.2`, `v1.10.0`, etc.)
+## Next release (`v1.10.0`, etc.)
 
 Make a commit on `main`, update `VERSION` and `CHANGELOG.md`, pass CI/checks, and create an **annotated** tag, for example:
 
@@ -22,9 +22,11 @@ python3 scripts/check_public_release.py
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 git add -A
 git commit -m 'fix: explain change'
-git tag -a v1.9.2 -m 'TosBot v1.9.2'
+git tag -a v1.10.0 -m 'TosBot v1.10.0'
 git push origin main
-git push origin v1.9.2
+git push origin v1.10.0
 ```
 
 Only tag a version when code and release notes actually correspond to that version. Never amend/tag a published release to point to different code.
+
+For the full v1.10.0 upgrade procedure and folder paths, see [UPGRADE_GITHUB.md](UPGRADE_GITHUB.md).

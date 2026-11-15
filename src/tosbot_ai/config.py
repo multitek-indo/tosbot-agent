@@ -36,6 +36,10 @@ class Settings:
     signer: str
     city: str
     offer_signature_path: Path
+    groups_enabled: bool = False
+    allowed_group_ids: tuple[int, ...] = ()
+    group_ops_enabled: bool = False
+    trusted_group_admin: bool = False
 
     @classmethod
     def load(cls) -> 'Settings':
@@ -47,6 +51,14 @@ class Settings:
         except Exception: zone = ZoneInfo("Asia/Jakarta")
         services = tuple(x.strip() for x in env("ADMIN_ALLOWED_SERVICES").split(",") if x.strip())
         base = Path(__file__).resolve().parents[2]
+        # No authentication by individual user ID inside groups. The optional
+        # group ID allowlist limits which GROUPS may use the public assistant.
+        group_ids = []
+        for part in env("TELEGRAM_ALLOWED_GROUP_IDS").split(","):
+            if part.strip():
+                try: group_ids.append(int(part.strip()))
+                except ValueError: raise ValueError("TELEGRAM_ALLOWED_GROUP_IDS berisi ID grup tidak valid")
+        groups_enabled = env("TELEGRAM_GROUPS_ENABLED", "false").lower() in ("true", "1", "yes", "on")
         return cls(
             token=env("TELEGRAM_BOT_TOKEN"), owner_id=owner_id,
             db_path=Path(env("TOSBOT_DB_PATH", "/var/lib/tosbot-ai/tosbot.sqlite3")),
@@ -65,9 +77,14 @@ class Settings:
             account=env("COMPANY_ACCOUNT"),account_name=env("COMPANY_ACCOUNT_NAME"),
             signer=env("COMPANY_SIGNER", ""),city=env("COMPANY_CITY", ""),
             offer_signature_path=Path(env("TOSBOT_OFFER_SIGNATURE_PATH", str(base / "assets/offer-signature.png"))),
+            groups_enabled=groups_enabled, allowed_group_ids=tuple(group_ids),
+            group_ops_enabled=env("TELEGRAM_GROUP_OPERATIONS_ENABLED", "false").lower() in ("true", "1", "yes", "on"),
+            trusted_group_admin=env("TELEGRAM_TRUSTED_GROUP_ADMIN", "false").lower() in ("true", "1", "yes", "on"),
         )
 
     def validate(self):
+        if self.trusted_group_admin and (not self.groups_enabled or len(self.allowed_group_ids) != 1):
+            raise ValueError("Trusted group admin membutuhkan TELEGRAM_GROUPS_ENABLED=true dan tepat satu TELEGRAM_ALLOWED_GROUP_IDS yang eksplisit.")
         if not self.token or self.token == "ISI_TOKEN_BOTFATHER":
             raise ValueError("Isi TELEGRAM_BOT_TOKEN di /etc/tosbot-ai/tosbot.env")
         # owner_id=0 adalah mode onboarding yang hanya melayani /myid.

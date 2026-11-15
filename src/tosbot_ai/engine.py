@@ -44,17 +44,29 @@ class Engine:
             # Service remains available for emergency /disk and /ram diagnosis.
             log.exception('LangGraph checkpoint initialization failed; using legacy history')
 
+    def _state_key(self, key):
+        return key if self.s.owner_id >= 0 else f'group_{self.s.owner_id}_{key}'
+
+    def _get_state(self, key, default=None):
+        return self.db.get_kv(self._state_key(key), default)
+
+    def _set_state(self, key, value):
+        return self.db.set_kv(self._state_key(key), value)
+
+    def _history_key(self):
+        return 'history'
+
     def _history(self):
         if self.flow:
             try:
                 turns = self.flow.recent()
                 if turns: return turns
             except Exception: log.warning('LangGraph memory read failed')
-        return self.db.get_kv('history',[])
+        return self._get_state(self._history_key(),[])
     def _remember(self,user:str,response:str):
         history=self._history()
         history.extend([{'role':'user','content':_safe_memory(user,650)}, {'role':'assistant','content':_safe_memory(response,900)}])
-        self.db.set_kv('history',history[-30:])
+        self._set_state(self._history_key(),history[-30:])
         if self.flow:
             try: self.flow.remember(user, response)
             except Exception: log.warning('LangGraph memory update failed; legacy history retained')
@@ -347,23 +359,23 @@ class Engine:
         if raw in ('/pengingat','/reminders'):return self._reminder_list()
         if raw in ('/batal','/cancel'):
             self.db.delete_draft(self.s.owner_id)
-            self.db.set_kv('pending_admin',None)
-            self.db.set_kv('pending_directory',None)
-            self.db.set_kv('pending_mkdir',None)
+            self._set_state('pending_admin',None)
+            self._set_state('pending_directory',None)
+            self._set_state('pending_mkdir',None)
             return 'Proses draft/konfirmasi admin dibatalkan.'
         return None
 
     def _maybe_cd(self, text: str) -> str | None:
         low=text.lower().strip().rstrip('!').strip()
         if low in ('pwd','/pwd','direktori sekarang','lagi di folder mana'):
-            return '📍 Direktori aktif TosBot: '+str(self.db.get_kv('current_dir') or HOME_ROOT)
+            return '📍 Direktori aktif TosBot: '+str(self._get_state('current_dir') or HOME_ROOT)
         match=re.match(r'^cd(?:\s+(.+))?$', low)
         if not match:
             return None
         arg=(match.group(1) or '').strip()
         if not arg:
             return 'Gunakan `cd home`, `cd script`, atau `cd /home/tosbot/script/ai-agent`.'
-        current=self.db.get_kv('current_dir') or HOME_ROOT
+        current=self._get_state('current_dir') or HOME_ROOT
         path=safe_path(arg,current)
         if not path:
             return ('⛔ Direktori di luar izin. `cd` di TosBot hanya mengubah konteks '
@@ -371,7 +383,7 @@ class Engine:
         result=self.directory_agent.run('list',path)
         if not result.startswith('📂 '):
             return result
-        self.db.set_kv('current_dir',path)
+        self._set_state('current_dir',path)
         return f'📍 Direktori aktif sekarang: {path}\nKetik `ls` untuk melihat isinya.'
 
     @staticmethod
@@ -398,7 +410,7 @@ class Engine:
         return location,name
 
     def _request_mkdir(self, parent: str, name: str) -> str:
-        current=self.db.get_kv('current_dir') or HOME_ROOT
+        current=self._get_state('current_dir') or HOME_ROOT
         parent=safe_path(parent,current)
         if parent not in (HOME_ROOT, HOME_ROOT+'/script'):
             return ('⛔ Pembuatan folder hanya tersedia langsung di /home/tosbot '
@@ -406,25 +418,25 @@ class Engine:
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}',str(name or '')):
             return 'Nama folder tidak valid. Gunakan huruf, angka, tanda hubung atau underscore.'
         target=parent+'/'+name
-        self.db.set_kv('pending_mkdir',{'path':target,'created_at':int(time.time()),'state':'confirm'})
+        self._set_state('pending_mkdir',{'path':target,'created_at':int(time.time()),'state':'confirm'})
         return (f'📁 Akan membuat folder: {target}\n'
                 'Konfirmasi dengan "ya buatkan" dalam 120 detik, atau balas "batal". '
                 'Belum ada perubahan pada VPS.')
 
     def _maybe_mkdir(self,text:str) -> str|None:
         low=text.lower().strip().strip(' .!')
-        pending=self.db.get_kv('pending_mkdir')
+        pending=self._get_state('pending_mkdir')
         if pending and time.time()-pending.get('created_at',0)>120:
-            self.db.set_kv('pending_mkdir',None)
+            self._set_state('pending_mkdir',None)
             pending=None
             if low in CONFIRMATIONS:
                 return 'Konfirmasi pembuatan folder sudah kedaluwarsa. Kirim ulang perintah membuat folder.'
         if pending and low in ('batal','batal buat folder','ora dadi','mboten dados','cancel'):
-            self.db.set_kv('pending_mkdir',None)
+            self._set_state('pending_mkdir',None)
             return 'Pembuatan folder dibatalkan. Tidak ada perubahan.'
         if pending and low in CONFIRMATIONS:
             if pending.get('state')=='confirm':
-                self.db.set_kv('pending_mkdir',None)
+                self._set_state('pending_mkdir',None)
                 result=self.directory_agent.mkdir(pending['path'])
                 self.db.audit(self.s.owner_id,'mkdir',pending['path'])
                 return result
@@ -437,40 +449,40 @@ class Engine:
                 parent, name=location.rsplit('/',1)
                 location=parent
             if not name:
-                self.db.set_kv('pending_mkdir',{'state':'name','parent':location,'created_at':int(time.time())})
+                self._set_state('pending_mkdir',{'state':'name','parent':location,'created_at':int(time.time())})
                 return 'Nama folder yang ingin dibuat apa?'
             if not location:
-                location=self.db.get_kv('current_dir') or HOME_ROOT
+                location=self._get_state('current_dir') or HOME_ROOT
             if location in ('/home','/root','/etc','/var'):
-                self.db.set_kv('pending_mkdir',{'state':'location','name':name,'created_at':int(time.time())})
+                self._set_state('pending_mkdir',{'state':'location','name':name,'created_at':int(time.time())})
                 return (f'Folder bernama {name} belum dibuat. Untuk keamanan saya tidak dapat membuatnya '
                         f'langsung di {location}. Pilih `/home/tosbot` atau `/home/tosbot/script`.')
             return self._request_mkdir(location,name)
         if pending and pending.get('state')=='location':
-            selected=safe_path(low, self.db.get_kv('current_dir') or HOME_ROOT)
+            selected=safe_path(low, self._get_state('current_dir') or HOME_ROOT)
             if selected:
-                self.db.set_kv('pending_mkdir',None)
+                self._set_state('pending_mkdir',None)
                 return self._request_mkdir(selected,pending['name'])
         if pending and pending.get('state')=='name':
             if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}',low):
-                self.db.set_kv('pending_mkdir',None)
-                return self._request_mkdir(pending.get('parent') or (self.db.get_kv('current_dir') or HOME_ROOT),low)
+                self._set_state('pending_mkdir',None)
+                return self._request_mkdir(pending.get('parent') or (self._get_state('current_dir') or HOME_ROOT),low)
         return None
 
     def _maybe_directory(self, text: str) -> str | None:
         low=text.lower().strip().strip(' .!')
-        pending=self.db.get_kv('pending_directory')
-        cwd=self.db.get_kv('current_dir') or HOME_ROOT
+        pending=self._get_state('pending_directory')
+        cwd=self._get_state('current_dir') or HOME_ROOT
         if pending and low in ('/batal','batal','ora dadi','mboten dados'):
-            self.db.set_kv('pending_directory',None)
+            self._set_state('pending_directory',None)
             return 'Pemeriksaan direktori dibatalkan.'
         if pending and low in CONFIRMATIONS:
-            self.db.set_kv('pending_directory',None)
+            self._set_state('pending_directory',None)
             return self.directory_agent.run(pending['operation'],pending.get('path') or cwd)
         if pending:
             selected=safe_path(low,cwd)
             if selected:
-                self.db.set_kv('pending_directory',None)
+                self._set_state('pending_directory',None)
                 return self.directory_agent.run(pending['operation'],selected)
         if not pending and low in CONFIRMATIONS:
             old=self._history()[-8:]
@@ -486,12 +498,12 @@ class Engine:
         if command:
             operation,path=command
             if path and safe_path(path):
-                self.db.set_kv('pending_directory',None)
+                self._set_state('pending_directory',None)
                 return self.directory_agent.run(operation,path)
             if re.search(r'\b(?:/root|root|/etc|/var)\b',low) or '/home/' in low:
                 return ('⛔ Path di luar izin. Saya bisa melihat /home/tosbot '
                         'dan subfoldernya, bukan /root atau direktori sistem.')
-            self.db.set_kv('pending_directory',{'operation':operation,'path':None})
+            self._set_state('pending_directory',{'operation':operation,'path':None})
             return 'Direktori mana yang ingin dilihat? Contoh: home, script, atau ai-agent.'
         return None
 
@@ -537,16 +549,16 @@ class Engine:
             return filesystem_reply,None
         draft=self.db.get_draft(self.s.owner_id)
         low=text.lower().strip().strip('.')
-        pending=self.db.get_kv('pending_admin')
+        pending=self._get_state('pending_admin')
         if pending:
             if time.time()-pending.get('created_at',0)>90:
-                self.db.set_kv('pending_admin',None)
+                self._set_state('pending_admin',None)
                 pending=None
             elif low in ('batalkan restart','batal restart','/batalrestart'):
-                self.db.set_kv('pending_admin',None)
+                self._set_state('pending_admin',None)
                 return 'Permintaan restart dibatalkan.',None
             elif low==f'konfirmasi restart {pending.get("service","").lower()}':
-                self.db.set_kv('pending_admin',None)
+                self._set_state('pending_admin',None)
                 self.db.audit(self.s.owner_id,'service_restart',pending['service'])
                 return restart_service(self.s,pending['service']),None
         if draft and low in ('sudah sesuai','sudah sesuai buat pdf','sudah sesuai, buat pdf',
@@ -576,10 +588,10 @@ class Engine:
         elif action=='server_memory':answer=memory()
         elif action in ('server_directory_list','server_directory_count','server_directory_tree'):
             op={'server_directory_list':'list','server_directory_count':'count','server_directory_tree':'tree'}[action]
-            path=safe_path(d.get('path'),self.db.get_kv('current_dir') or HOME_ROOT)
+            path=safe_path(d.get('path'),self._get_state('current_dir') or HOME_ROOT)
             if path: answer=self.directory_agent.run(op,path)
             else:
-                self.db.set_kv('pending_directory',{'operation':op,'path':None})
+                self._set_state('pending_directory',{'operation':op,'path':None})
                 answer='Direktori mana yang ingin dilihat? Anda bisa memilih home, script, atau ai-agent.'
         elif action=='server_ping':answer=ping_private(str(d.get('address') or d.get('ip') or ''), d.get('count',4))
         elif action=='server_directory_cd':
@@ -592,7 +604,7 @@ class Engine:
             name=validate_service(self.s,str(d.get('service') or ''))
             if not name:answer='Restart ditolak: unit belum diizinkan admin. Tambahkan melalui ADMIN_ALLOWED_SERVICES dan allowlist root.'
             else:
-                self.db.set_kv('pending_admin',{'service':name,'created_at':int(time.time())})
+                self._set_state('pending_admin',{'service':name,'created_at':int(time.time())})
                 answer=(f'⚠️ Restart {name} dapat mengganggu layanan.\n'
                         f'Jika yakin, balas persis: KONFIRMASI RESTART {name}\n'
                         'Berlaku selama 90 detik. Untuk batal, balas "batal restart".')

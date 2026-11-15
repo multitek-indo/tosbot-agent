@@ -350,3 +350,99 @@ class Terminal:
         if messages:
             self.db.set_kv('term_notified_jobs',list(notified)[-100:])
         return messages
+
+
+class TrustedGroupTerminal:
+    """Per-grup shell jobs with no per-user TOTP. ONLY for explicitly opted-in
+    group IDs checked against root-owned config by the privileged broker.
+    Every message requires a real Telegram user and explicit mention, validated
+    by bot.py before reaching this class.
+    """
+    def __init__(self,settings,store,group_id):
+        self.s, self.db, self.group_id = settings, store, int(group_id)
+        self.prefix = f'trusted_group_{self.group_id}'
+
+    def _get(self, key, default):
+        return self.db.get_kv(self.prefix+'_'+key, default)
+
+    def _set(self, key, value):
+        self.db.set_kv(self.prefix+'_'+key,value)
+
+    def _cwd(self):
+        return self._get('cwd','/home')
+
+    def _packet(self,actor_id):
+        return {'group_id':self.group_id,'actor_id':actor_id}
+
+    def _submit(self,cmd,actor_id):
+        if not cmd or len(cmd)>2048 or '\n' in cmd or '\r' in cmd:
+            return 'Perintah harus satu baris, maksimum 2048 karakter.'
+        if cmd in ('nano','vi','vim','htop','bash','sh','sudo su','sudo -i','su','su -'):
+            return 'Telegram tidak memiliki TTY persisten. Gunakan command non-interaktif.'
+        try:
+            cmd = normalize_command(cmd)
+        except ValueError as e:
+            return '❌ '+str(e)
+        res=broker('group-submit', {**self._packet(actor_id), 'mode':'root',
+                                    'command':cmd,'cwd':self._cwd()})
+        if not res.get('ok'):
+            return '❌ Job root grup ditolak: '+str(res.get('error'))
+        jobs=self._get('jobs',[]) or []
+        jobs.append({'id':res['job_id'], 'actor':actor_id,'at':int(time.time()),
+                     'cmdhash':hashlib.sha256(cmd.encode()).hexdigest()[:16]})
+        self._set('jobs',jobs[-50:])
+        self.db.audit(actor_id,'trusted_group_root',str(self.group_id)+' '+res['job_id'])
+        return f'⏳ Admin grup menjalankan sebagai root: `{cmd[:180]}`\nJob: `{res["job_id"]}`\nKetik `/job {res["job_id"]}` untuk output.'
+
+    def handle(self,raw,actor_id):
+        text=(raw or '').strip()
+        if not text:
+            return None
+        if text in ('/terminal','/shellhelp','/help'):
+            return ('🖥 Trusted Group Console (root). Semua anggota grup terpilih bisa\n'
+                    'kirim `@bot /sudo <cmd>` atau `@bot /sh <cmd>` dan dapat melihat hasil di grup.\n'
+                    'Perintah bebas tidak memerlukan TOTP. Risiko kehilangan data/ambil alih VPS sangat tinggi.')
+        if text in ('sudo su','sudo -i','su -','/rootlogin'):
+            return '✅ Hak root sudah aktif otomatis di grup ini. Kirim perintah non-interaktif.'
+        if text in ('/auth','/exit','/cancelcmd') or text.startswith('/auth ') or text.startswith('/approve '):
+            return 'Trusted group tidak membutuhkan autentikasi atau approval terpisah.'
+        m=re.fullmatch(r'/job(?:\s+([0-9a-f]{20}))?',text)
+        if m:
+            jobs=self._get('jobs',[]) or []
+            selected=m.group(1) or (jobs[-1]['id'] if jobs else '')
+            if not any(j['id']==selected for j in jobs):
+                return 'Job tersebut tidak ditemukan dalam grup ini.'
+            return Terminal.format_status(broker('group-status',self._packet(actor_id),job_id=selected))
+        if text=='/jobs':
+            return '\n'.join('• '+j['id'] for j in (self._get('jobs',[]) or [])[-10:]) or 'Belum ada job.'
+        m=re.fullmatch(r'cd(?:\s+(.+))?',text)
+        if m:
+            cwd=terminal_path(m.group(1) or '~',self._cwd())
+            if len(cwd)>240: return 'Direktori terlalu panjang.'
+            self._set('cwd',cwd)
+            return '📍 Direktori kerja grup: '+cwd
+        if text in ('pwd','/pwd','/cd'):
+            return '📍 Direktori kerja grup: '+self._cwd()
+        if text.startswith(('/sudo ','/sh ','/bash ','/run ')):
+            command=text.split(' ',1)[1]
+            if command.startswith('sudo '):command=command[5:]
+            return self._submit(command,actor_id)
+        # bare sudo command is accepted directly as root
+        if literal_shell(text):
+            return self._submit(text[5:] if text.startswith('sudo ') else text,actor_id)
+        return None
+
+    def finished_jobs(self):
+        jobs=self._get('jobs',[]) or []
+        notified=set(self._get('notified',[]) or [])
+        results=[]
+        for j in jobs[-30:]:
+            if j['id'] in notified:continue
+            if len(results)>=5:break
+            res=broker('group-status',self._packet(j['actor']),job_id=j['id'])
+            if res.get('ok') and res.get('state') in ('done','failed','timed_out'):
+                results.append(Terminal.format_status(res))
+                notified.add(j['id'])
+        if results:
+            self._set('notified',list(notified)[-150:])
+        return results
