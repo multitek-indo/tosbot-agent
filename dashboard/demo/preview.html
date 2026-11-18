@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TosBot Dashboard v0.2.0 — Pratinjau</title><link rel="stylesheet" href="../app/static/style.css"><script src="../app/static/app.js" defer></script><script src="../app/static/settings.js" defer></script><script>
+// PRATINJAU OFFLINE v0.2.0: seluruh data berikut simulasi, tidak memakai data VPS.
+const stamp=Math.floor(Date.now()/1000);
+const mockDocs=[{id:1,kind:'invoice',number:'WEB-INV/2026/0001',customer:'PT Contoh Tekstil A',attention:'Bu Nurul',total:1500000,created_at:stamp-86400,source:'dashboard',download:'#'},{id:2,kind:'offer',number:'WEB-PEN/2026/0002',customer:'PT Contoh Garmen B',total:2800000,created_at:stamp-172800,source:'telegram',download:'#'}];
+const mockJobs=[{id:17,customer_id:1,customer:'PT Contoh Tekstil A',machine:'JUKI LK-1900A',problem:'PCB tidak merespons',technician:'Imam',status:'proses',scheduled_date:'2026-11-19',estimate:1500000,created_at:stamp},{id:16,customer_id:2,customer:'PT Contoh Garmen B',machine:'JUKI LBH-1790',problem:'Auto feeder bermasalah',technician:'Rizky',status:'menunggu_sparepart',scheduled_date:'2026-11-20',estimate:2800000,created_at:stamp},{id:15,customer_id:3,customer:'PT Contoh Tekstil C',machine:'PEGASUS M700',problem:'Benang sering putus',technician:'Imam',status:'dijadwalkan',scheduled_date:'2026-11-21',estimate:600000,created_at:stamp},{id:14,customer_id:4,customer:'PT Contoh Mesin D',machine:'JUKI DDL-8700',problem:'Motor',technician:'Rizky',status:'selesai',scheduled_date:'2026-11-17',estimate:475000,created_at:stamp},{id:13,customer_id:5,customer:'PT Contoh Servis E',machine:'JACK A4',problem:'Kontrol digital',technician:'Imam',status:'proses',scheduled_date:'2026-11-21',estimate:850000,created_at:stamp}];
+const mockCustomers=['PT Contoh Tekstil A','PT Contoh Garmen B','PT Contoh Tekstil C','PT Contoh Mesin D','PT Contoh Servis E','PT Contoh Tekstil F','CV Contoh Garmen G'].map((name,i)=>({id:i+1,name,pic:['Bu Nurul','Mr. Jess','Bu Tari','Pak Ari','Pak Rudi','Bu Lina','Pak Imam'][i],phone:'08xx-xxxx-xxxx',email:'',address:'',note:''}));
+const mockFinance=Array.from({length:10},(_,i)=>({id:i+1,kind:i%3?'income':'expense',amount:i%3?4800000:1950000,category:i%3?'Service mesin':'Operasional',note:'Data simulasi',ts:stamp-i*86400,source:i%2?'telegram':'dashboard'}));
+const pretend={ '/me':{username:'admin',csrf:'offline-preview',app_version:'0.2.0'},'/branding':{company_name:'PT MULTITEK (DEMO)',has_logo:false,logo_url:null},'/settings/company':{company_name:'PT MULTITEK (DEMO)',has_logo:false,logo_url:null},'/settings/users':{current:'admin',role:'admin',users:[{name:'admin',updated:stamp},{name:'staf01',updated:stamp-86400}]} ,'/overview':{customers:7,active_jobs:4,completed_jobs:1,invoice_total:1500000,recent_jobs:mockJobs,recent_documents:mockDocs,snapshot:{available:true,age_seconds:84},trend:[{month:'Jun',income:12000000,expense:5000000},{month:'Jul',income:16500000,expense:7000000},{month:'Agu',income:14200000,expense:8000000},{month:'Sep',income:21000000,expense:9000000},{month:'Okt',income:26000000,expense:11000000},{month:'Nov',income:31200000,expense:14200000}]},'/customers':mockCustomers,'/jobs':mockJobs,'/documents':mockDocs,'/document-settings':{missing:[],invoice_ready:true,offer_ready:true,company:'PT CONTOH'},'/finance':mockFinance,'/reminders':[{id:4,title:'Konfirmasi penawaran PT Contoh Garmen B',due:stamp+86400,state:'pending'}],'/server':{hostname:'tosbos',service:'active',cpu_percent:17,ram_percent:38,disk_percent:23,ram_used:1395864371,ram_total:3758096384,disk_used:11596411699,disk_total:51539607552,uptime_seconds:452300,snapshot:{available:true,age_seconds:84}}};
+window.fetch=async(path,opts)=>({ok:true,status:200,json:async()=>pretend[String(path).replace('/api','')]||{ok:true,id:99}});
+</script></head>
+<body>
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><div class="brand-logo"><span class="brand-fallback">M</span><img class="brand-img" alt="Logo dashboard" hidden></div><div><strong class="company-name">MULTITEK</strong><small>OPERATIONS HUB</small></div></div>
+    <div class="side-caption">WORKSPACE</div>
+    <nav class="nav" id="nav">
+      <button data-view="overview" class="nav-link active"><span class="nav-ico">▦</span> Ringkasan</button>
+      <button data-view="customers" class="nav-link"><span class="nav-ico">♙</span> Pelanggan</button>
+      <button data-view="jobs" class="nav-link"><span class="nav-ico">▤</span> Pekerjaan servis</button>
+      <button data-view="documents" class="nav-link"><span class="nav-ico">▧</span> Penawaran & invoice</button>
+      <button data-view="finance" class="nav-link"><span class="nav-ico">◉</span> Keuangan</button>
+      <button data-view="reminders" class="nav-link"><span class="nav-ico">◷</span> Pengingat</button>
+      <button data-view="server" class="nav-link"><span class="nav-ico">⌘</span> VPS & sistem</button>
+      <button data-view="settings" class="nav-link"><span class="nav-ico">⚙</span> Pengaturan</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="side-info"><span class="pulse"></span><span>TosBot terhubung melalui sinkronisasi lokal</span></div><div class="side-version">DASHBOARD v0.2.0 <span>·</span> TOSBOT v1.12.1</div></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar">
+      <div class="header-left"><button class="mobile-toggle" id="menu-toggle" aria-label="Buka menu">☰</button><div class="breadcrumb">Workspace <span>/</span> <strong id="current-page">Ringkasan</strong></div></div>
+      <div class="header-right"><span id="current-date" class="topdate"></span><span class="header-divider"></span><span class="avatar" id="avatar">A</span><span class="user-name" id="username">Admin</span><button class="btn-ghost" id="logout">Keluar</button></div>
+    </header>
+    <main class="main"><div class="source-note"><b>PRATINJAU OFFLINE v0.2.0:</b> seluruh nama, jumlah, transaksi, dan metrik berikut adalah data simulasi. Instal dashboard di VPS untuk melihat data sebenarnya.</div><div id="view"></div></main>
+  </div>
+</div>
+<div class="toast-zone" id="toasts" role="status" aria-live="polite"></div>
+<dialog id="modal"><div id="modal-content"></div></dialog>
+</body></html>

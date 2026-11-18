@@ -10,6 +10,7 @@ from .engine import Engine
 from .storage import Store
 from .terminal import Terminal, TrustedGroupTerminal
 from .group import GroupAssistant
+from .business_bridge import BusinessBridge
 import re
 from dataclasses import replace
 
@@ -45,6 +46,19 @@ class Telegram:
                                files={'document':(path.name,fp,'application/pdf')})
         r.raise_for_status()
         if not r.json().get('ok'):raise RuntimeError('Telegram gagal mengirim PDF')
+
+
+    def photo(self, chat_id:int, data:bytes, caption:str='',
+              reply_to_message_id:int|None=None, message_thread_id:int|None=None):
+        payload={'chat_id':str(chat_id),'caption':caption[:1000]}
+        if reply_to_message_id is not None:
+            payload['reply_parameters']='{"message_id":'+str(int(reply_to_message_id))+',"allow_sending_without_reply":true}'
+        if message_thread_id is not None:
+            payload['message_thread_id']=str(int(message_thread_id))
+        r=self.client.post(self.api+'sendPhoto',data=payload,
+                           files={'photo':('foto-servis.jpg',data,'image/jpeg')})
+        r.raise_for_status()
+        if not r.json().get('ok'):raise RuntimeError('Telegram gagal mengirim foto servis')
 
     def poll(self,offset):
         return self.call('getUpdates',{'offset':offset,'timeout':25,'limit':30,'allowed_updates':['message']})
@@ -123,9 +137,24 @@ def _reply_to_this_bot(message:dict, bot_user_id:int) -> bool:
     return True
 
 
+
+def _send_business_answer(tg:Telegram, bridge:BusinessBridge, answer, chat_id:int,
+                          message_id:int|None=None, thread_id:int|None=None):
+    tg.say(chat_id,answer.text,reply_to_message_id=message_id,message_thread_id=thread_id)
+    for photo_id,caption in answer.photos:
+        try:
+            tg.photo(chat_id,bridge.photo_bytes(photo_id),caption,
+                     reply_to_message_id=message_id,message_thread_id=thread_id)
+        except Exception:
+            log.warning('photo delivery failed for approved dashboard photo (redacted)')
+            try:tg.say(chat_id,'Ada foto yang gagal terkirim. Coba minta lagi atau unduh dari dashboard.',
+                       reply_to_message_id=message_id,message_thread_id=thread_id)
+            except Exception:pass
+
+
 def _process_group(update:dict,tg:Telegram,s:Settings,group_assistant:GroupAssistant|None,
                    bot_username:str,db:Store|None=None, trusted_routers:dict|None=None,
-                   bot_user_id:int=0):
+                   bot_user_id:int=0,business_bridge:BusinessBridge|None=None):
     msg=update.get('message') or {}
     chat=msg.get('chat') or {}
     user=msg.get('from') or {}
@@ -149,6 +178,14 @@ def _process_group(update:dict,tg:Telegram,s:Settings,group_assistant:GroupAssis
         clean=text.strip()
     reply_only = not addressed
     try:
+        # Read-only dashboard questions and photos, only for explicitly trusted groups.
+        if (business_bridge is not None and s.trusted_group_admin and
+                chat_id in s.allowed_group_ids):
+            found=business_bridge.answer(clean)
+            if found is not None:
+                _send_business_answer(tg,business_bridge,found,chat_id,
+                                      msg.get('message_id'),msg.get('message_thread_id'))
+                return
         if s.trusted_group_admin and chat_id in s.allowed_group_ids and db is not None and trusted_routers is not None:
             if chat_id not in trusted_routers:
                 trusted_routers[chat_id]=(TrustedGroupTerminal(s,db,chat_id),
@@ -185,7 +222,8 @@ def _process_group(update:dict,tg:Telegram,s:Settings,group_assistant:GroupAssis
 
 def process_update(update:dict,tg:Telegram,engine:Engine,s:Settings,terminal:Terminal|None=None,
                    group_assistant:GroupAssistant|None=None,bot_username:str='',
-                   db:Store|None=None,trusted_routers:dict|None=None,bot_user_id:int=0):
+                   db:Store|None=None,trusted_routers:dict|None=None,bot_user_id:int=0,
+                   business_bridge:BusinessBridge|None=None):
     msg=update.get('message') or {}
     if not msg:return
     user=msg.get('from') or {}
@@ -194,7 +232,7 @@ def process_update(update:dict,tg:Telegram,engine:Engine,s:Settings,terminal:Ter
     user_id=user.get('id')
     text=str(msg.get('text') or '').strip()
     if chat.get('type') in {'group','supergroup'}:
-        _process_group(update,tg,s,group_assistant,bot_username,db,trusted_routers,bot_user_id)
+        _process_group(update,tg,s,group_assistant,bot_username,db,trusted_routers,bot_user_id,business_bridge)
         return
     # Help owner identify the account without exposing any bot credentials.
     if text=='/myid' and chat.get('type')=='private' and user_id:
@@ -215,6 +253,11 @@ def process_update(update:dict,tg:Telegram,engine:Engine,s:Settings,terminal:Ter
                 try: tg.call('deleteMessage',{'chat_id':chat_id,'message_id':msg['message_id']})
                 except Exception: pass
             return
+        if business_bridge is not None:
+            found=business_bridge.answer(text)
+            if found is not None:
+                _send_business_answer(tg,business_bridge,found,chat_id,msg.get('message_id'))
+                return
         reply,doc=engine.handle(text)
         tg.say(chat_id,reply)
         if doc is not None:tg.file(chat_id,doc)
@@ -244,6 +287,7 @@ def run():
             trusted_routers[group_id]=(TrustedGroupTerminal(s,db,group_id),
                                        Engine(replace(s,owner_id=group_id),db))
     tg=Telegram(s.token)
+    business_bridge=BusinessBridge()
     # Verified Telegram identity. Never rely on hardcoded names or untrusted
     # group messages to tell us which @username belongs to this bot.
     bot_username=''
@@ -274,7 +318,7 @@ def run():
             for update in updates:
                 current=update['update_id']
                 if current<offset:continue
-                process_update(update,tg,engine,s,terminal,group_assistant,bot_username,db,trusted_routers,bot_user_id)
+                process_update(update,tg,engine,s,terminal,group_assistant,bot_username,db,trusted_routers,bot_user_id,business_bridge)
                 offset=current+1
                 db.set_kv('telegram_offset',offset)
         except KeyboardInterrupt:raise

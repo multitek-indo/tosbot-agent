@@ -1,3 +1,9 @@
+## v1.12.2 — Telegram + Dashboard integration
+
+- Query terstruktur pelanggan, servis, foto, finance, dan dokumen dari data dashboard tanpa menebak dengan AI.
+- Mengirim foto barang tersimpan sebagai Telegram photo, dengan disambiguasi #ID.
+- Batas trusted group dan autentikasi tetap berlaku.
+
 ## v1.12.1 — Telegram reply-to-bot fix
 
 - Accept direct replies to TosBot's own group messages without requiring an extra @mention.

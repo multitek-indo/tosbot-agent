@@ -116,4 +116,4 @@ echo 'Instalasi selesai. Isi /etc/tosbot-ai/tosbot.env lalu jalankan systemctl s
 echo 'App: /opt/tosbot-ai; config: /etc/tosbot-ai; state: /var/lib/tosbot-ai; logs: journalctl -u tosbot-ai'
 echo 'Terminal pengguna terbatas tersedia; akses root NONAKTIF sampai admin menjalankan:'
 echo '  sudo /usr/local/sbin/tosbot-ai-admin-ctl setup'
-echo 'Simpan TOTP di authenticator. Jangan kirim rahasia TOTP ke Telegram.' 
+echo 'Simpan TOTP di authenticator. Jangan kirim rahasia TOTP ke Telegram.'

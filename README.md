@@ -112,3 +112,8 @@ The user can explicitly mention the bot **or** reply to a message posted by the 
 Example: `@mustikasaribot buatkan penawaran ...` → TosBot previews draft → a group member presses **Reply** on TosBot's preview and sends `sudah sesuai`. This continues the group's shared draft and finalizes the PDF if the draft is complete.
 
 Because a trusted group shares a single draft, only one current document is active per group. Review the latest preview before finalizing; do not reply to stale previews from older transactions.
+
+
+## v1.12.2: Dashboard live bridge
+
+Lihat `UPGRADE_V1122.md`. Dashboard memegang kebenaran untuk data pelanggan, tiket servis, dan foto. Chatbot mengakses API dashboard localhost menggunakan token acak dengan izin baca saja; pekerjaan, keuangan, atau dokumen lain tetap mengikuti jalur lama.

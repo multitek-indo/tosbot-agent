@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Multitek Operations — TosBot Dashboard</title><link rel="stylesheet" href="/static/style.css?v=0.3.0"><script src="/static/app.js?v=0.3.0" defer></script><script src="/static/settings.js?v=0.3.0" defer></script></head>
+<body>
+<div class="layout" id="app-layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><div class="brand-logo"><span class="brand-fallback">M</span><img class="brand-img" alt="Logo perusahaan" hidden></div><div class="brand-copy"><strong class="company-name">MULTITEK</strong><small>OPERATIONS HUB</small></div></div>
+    <div class="side-caption">WORKSPACE</div>
+    <nav class="nav" id="nav">
+      <button data-view="overview" class="nav-link active" title="Ringkasan" aria-label="Ringkasan"><span class="nav-ico" aria-hidden="true">▦</span><span class="nav-label">Ringkasan</span></button>
+      <button data-view="customers" class="nav-link" title="Pelanggan" aria-label="Pelanggan"><span class="nav-ico" aria-hidden="true">♙</span><span class="nav-label">Pelanggan</span></button>
+      <button data-view="jobs" class="nav-link" title="Pekerjaan servis" aria-label="Pekerjaan servis"><span class="nav-ico" aria-hidden="true">▤</span><span class="nav-label">Pekerjaan servis</span></button>
+      <button data-view="documents" class="nav-link" title="Penawaran & invoice" aria-label="Penawaran & invoice"><span class="nav-ico" aria-hidden="true">▧</span><span class="nav-label">Penawaran & invoice</span></button>
+      <button data-view="finance" class="nav-link" title="Keuangan" aria-label="Keuangan"><span class="nav-ico" aria-hidden="true">◉</span><span class="nav-label">Keuangan</span></button>
+      <button data-view="reminders" class="nav-link" title="Pengingat" aria-label="Pengingat"><span class="nav-ico" aria-hidden="true">◷</span><span class="nav-label">Pengingat</span></button>
+      <button data-view="server" class="nav-link" title="VPS & sistem" aria-label="VPS & sistem"><span class="nav-ico" aria-hidden="true">⌘</span><span class="nav-label">VPS & sistem</span></button>
+      <button data-view="settings" class="nav-link" title="Pengaturan" aria-label="Pengaturan"><span class="nav-ico" aria-hidden="true">⚙</span><span class="nav-label">Pengaturan</span></button>
+    </nav>
+    <div class="sidebar-bottom"><div class="side-info"><span class="pulse"></span><span>TosBot terhubung melalui sinkronisasi lokal</span></div><div class="side-version">DASHBOARD v0.3.0 <span>·</span> TOSBOT v1.12.2</div></div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+  <div class="workspace">
+    <header class="topbar">
+      <div class="header-left"><button class="mobile-toggle" id="menu-toggle" type="button" aria-label="Sematkan sidebar" aria-controls="sidebar" aria-expanded="false" title="Sematkan sidebar / buka menu">☰</button><div class="breadcrumb">Workspace <span>/</span> <strong id="current-page">Ringkasan</strong></div></div>
+      <div class="header-right"><span id="current-date" class="topdate"></span><span class="header-divider"></span><span class="avatar" id="avatar">A</span><span class="user-name" id="username">Admin</span><button class="btn-ghost" id="logout">Keluar</button></div>
+    </header>
+    <main class="main"><div id="view"></div></main>
+  </div>
+</div>
+<div class="toast-zone" id="toasts" role="status" aria-live="polite"></div>
+<dialog id="modal"><div id="modal-content"></div></dialog>
+</body></html>
