@@ -1,3 +1,4 @@
+# TOSBOT-DOCUMENT-INTENT-HOTFIX-20261119
 from __future__ import annotations
 import json
 import logging
@@ -40,6 +41,13 @@ Jika user mengatakan PIC Bu Nurul, 'Bu Nurul' adalah attention/PIC penerima, BUK
 keterangan item; berlaku juga PIC pak Agus, u.p. Bapak Arif, untuk Ibu Siti.
 Jika hanya mengubah satu kolom, gunakan item_changes dan pertahankan kolom lain.
 Ketentuan penawaran adalah field terms, sedangkan keterangan di tabel adalah note item.
+Alamat pelanggan/penerima harus masuk field customer_address; jangan masukkan alamat ke item.note.
+Jika user bilang "tambahkan alamat di bawah PT ...", itu update alamat customer, bukan item baru.
+Jika instruksi lengkap diawali "buatkan penawaran ...", selalu gunakan document_create dan
+abaikan draft lama. Jika hanya revisi tanpa perintah baru, document_update.
+Jika user menulis "keterangan selesai service", simpan sebagai note item, bukan terms.
+Jangan mengarang DP, tenggat, masa berlaku atau cakupan garansi yang tidak diminta.
+Jangan menggandakan baris jika customer hanya menambah alamat/keterangan/PIC.
 Jangan mengubah status dokumen menjadi final berdasarkan perkiraan AI.
 
 Pilihan action (tepat satu action paling relevan):
@@ -107,9 +115,10 @@ finance_add: {kind:'income'|'expense',amount:integer|null,category:string,note:s
 finance_report: {period:'this_month'|'all'|'YYYY-MM'}.
 reminder_add: {title:string,due:'YYYY-MM-DDTHH:MM:SS'|null}.
 document_create: {doc_type:'invoice'|'offer',customer:string|null,attention:string|null,
+                    customer_address:string|null,
                    items:[{name?:string,qty?:integer,unit?:string,price?:integer,note?:string}],
                    terms:string|null, number:string|null, discount:integer|null}.
-document_update: {patch: {customer?:str,attention?:str,number?:str,po_number?:str,
+document_update: {patch: {customer?:str,attention?:str,customer_address?:str,number?:str,po_number?:str,
                    payment_type?:str,discount?:integer,terms?:str,terms_add?:str,
                    items?:[{name?:str,qty?:integer,unit?:str,price?:integer,note?:str}],item_mode?:'add'|'replace',target_index?:integer,
                    item_changes?:{name?:str,qty?:integer,unit?:str,price?:integer,note?:str}}}.
