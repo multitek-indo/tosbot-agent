@@ -13,6 +13,10 @@ from .storage import Store
 from .conversation import ConversationGraph, _safe_memory
 from .directory_agent import DirectoryAgent, parse_directory_command, safe_path, CONFIRMATIONS, DIR_ROOT, HOME_ROOT
 from .network_agent import parse_ping, ping_private
+from .document_intent import (is_new_document_request, single_quantity,
+    customer_address, requested_item_note, single_price_reply,
+    improve_document_nlu, scrub_address_from_items, fallback_simple_document)
+# TOSBOT-DOCUMENT-INTENT-HOTFIX-20261119
 
 log=logging.getLogger(__name__)
 
@@ -89,6 +93,8 @@ class Engine:
         lines=[f'📄 Rancangan {dtype}',f'Pelanggan: {d.get("customer") or "[belum diisi]"}',
                f'PIC/penerima: {d.get("attention") or "[belum disebutkan]"}',
                'Nomor: '+(d.get('number') or '[otomatis setelah final]')]
+        if d.get('customer_address'):
+            lines.append('Alamat pelanggan: '+str(d['customer_address']))
         for idx,x in enumerate(d.get('items',[]),1):
             lines.append(f'{idx}. {x["name"]} — {x["qty"]} {x["unit"]} × {currency(x["price"])} = {currency(x["qty"]*x["price"])}')
             if x.get('note'): lines.append('   Keterangan barang: '+x['note'])
@@ -157,6 +163,7 @@ class Engine:
             return 'Mau membuat invoice atau surat penawaran?'
         d={'type':dtype,'customer':str(data.get('customer') or '').strip()[:150],
            'attention':str(data.get('attention') or '').strip()[:120],
+            'customer_address':str(data.get('customer_address') or '').strip()[:500],
            'items':[],'discount':0,'terms':'','number':'',
            'po_number':'','payment_type':'CASH PAYMENT','status':'collecting'}
         for x in (data.get('items') or [])[:40]:
@@ -179,9 +186,9 @@ class Engine:
         if not d:return 'Belum ada draft. Mulai dengan "buat invoice PT ABC" atau "buat penawaran PT ABC".'
         if not isinstance(patch,dict):return 'Bagian mana yang ingin diubah?'
         applied=[]
-        for field in ('customer','attention','number','po_number','po_date','payment_type'):
+        for field in ('customer','attention','customer_address','number','po_number','po_date','payment_type'):
             if field in patch and isinstance(patch[field],str):
-                d[field]=patch[field].strip()[:150];applied.append(field)
+                d[field]=patch[field].strip()[:500 if field=='customer_address' else 150];applied.append(field)
         if 'discount' in patch:
             try:
                 amount=int(patch['discount'])
@@ -216,6 +223,10 @@ class Engine:
                 if not new:return 'Perubahan item tidak valid. Pastikan jumlah dan harga berupa angka.'
                 d['items'][idx]=new;applied.append(f'item {idx+1}')
         if not applied:return 'Bagian mana yang ingin dikoreksi? Misalnya "PIC Bu Nurul", "jumlah item 1 jadi 2", atau "keterangan biaya sparepart belum termasuk".'
+        if d.get('customer_address'):
+            scrub_address_from_items(d.get('items'), d['customer_address'])
+            if d.get('pending_item'):
+                scrub_address_from_items([d['pending_item']], d['customer_address'])
         self._default_offer_terms(d)
         # Never silently confirm after an edit.
         d['status']='collecting'
@@ -568,18 +579,87 @@ class Engine:
         if draft and low in ('batal dokumen','batalkan invoice','batalkan penawaran'):
             self.db.delete_draft(self.s.owner_id)
             return 'Draft dokumen dibatalkan.',None
+        # An explicit 'buatkan penawaran ...' always starts a FRESH document.
+        # Do not feed an old LangGraph checkpoint into that independent request.
+        fresh_doc = is_new_document_request(text)
+        if draft and not fresh_doc:
+            address = customer_address(text)
+            if address and not re.search(r'(?i)\b(?:rincian|biaya\s+(?:service|servis)|harga\s+\d+|harga\s+rp)\b', text):
+                return self._patch_draft({'customer_address': address}), None
+            pending_item = draft.get('pending_item') or {}
+            qty = single_quantity(text, allow_bare=bool(pending_item))
+            if qty is not None:
+                if pending_item and pending_item.get('qty') in (None, ''):
+                    return self._patch_draft({'items': [{'qty': qty}]}), None
+                if not pending_item and len(draft.get('items') or []) == 1:
+                    return self._patch_draft({'target_index':1,'item_changes':{'qty':qty}}), None
+                return 'Sebutkan nomor item yang jumlahnya ingin diubah.', None
+            price = single_price_reply(text)
+            if price is not None:
+                if pending_item and pending_item.get('price') in (None, ''):
+                    changes={'price':price}
+                    mentioned_qty=re.search(r'(?i)\b(\d{1,5})\s*(?:unit|unut|pcs|buah)\b',text)
+                    if pending_item.get('qty') in (None, '') and mentioned_qty:
+                        changes['qty']=int(mentioned_qty.group(1))
+                    return self._patch_draft({'items':[changes]}), None
+                if not pending_item and len(draft.get('items') or []) == 1 and re.search(r'(?i)\bharga\b',text):
+                    return self._patch_draft({'target_index':1,'item_changes':{'price':price}}), None
+            # 'keterangan selesai service' edits an existing item, not an extra item.
+            note = requested_item_note(text)
+            if note and not re.search(r'(?i)\b(?:harga|rincian|buatkan|buat\s+penawaran)\b', text):
+                if len(draft.get('items') or []) == 1 and not draft.get('pending_item'):
+                    return self._patch_draft({'target_index':1,'item_changes':{'note':note}}), None
+                if draft.get('pending_item'):
+                    return self._patch_draft({'items':[{'note':note}]}), None
         history=self._history()
         try:
-            if self.flow:
+            if fresh_doc:
+                safe_fallback = fallback_simple_document(text)
+                try:
+                    parsed=self.ai.understand(text,[],None)
+                except RuntimeError:
+                    if not safe_fallback:
+                        raise
+                    parsed=safe_fallback
+                # For ONE clearly specified item, deterministic values protect
+                # totals when the LLM accidentally duplicates or alters it.
+                if safe_fallback:
+                    payload=parsed.get('data') if isinstance(parsed,dict) else {}
+                    payload=payload if isinstance(payload,dict) else {}
+                    extracted=payload.get('items')
+                    expected=safe_fallback['data']['items'][0]
+                    if (not isinstance(extracted,list) or len(extracted)!=1 or
+                            not isinstance(extracted[0],dict) or
+                            extracted[0].get('qty') != expected['qty'] or
+                            extracted[0].get('price') != expected['price'] or
+                            not extracted[0].get('name') or
+                            str(payload.get('customer') or '').casefold() !=
+                                safe_fallback['data']['customer'].casefold()):
+                        parsed=safe_fallback
+            elif self.flow:
                 parsed=self.flow.interpret(text,draft,history)
             else:
                 parsed=self.ai.understand(text,history,draft)
-            parsed=self._fix_recipient(text,parsed,draft)
+            parsed=self._fix_recipient(text,parsed,None if fresh_doc else draft)
+            parsed=improve_document_nlu(text,parsed,None if fresh_doc else draft)
+            if fresh_doc and parsed.get('action') != 'document_create':
+                return ('Permintaan penawaran baru dipahami, tetapi rincian belum berhasil diekstrak. '
+                        'Coba ulangi dengan nama customer, barang, jumlah, dan harga.'), None
         except RuntimeError as err:
             # Read-only metrics still available even if external AI is down.
             if re.search(r'\b(disk|storage|penyimpanan|kapasitas hardisk)\b',low):return disk(),None
             if re.search(r'\b(ram|memori|memory)\b',low):return memory(),None
             return str(err),None
+        # A model must not replace an ongoing draft unless user explicitly
+        # asked to create a new one. Convert mistaken creates into safe updates.
+        if draft and not fresh_doc and parsed.get('action') == 'document_create':
+            fields = parsed.get('data') or {}
+            patch = {k:v for k,v in fields.items() if k in (
+                'customer','attention','customer_address','items','discount','terms',
+                'number','po_number','po_date','payment_type') and v is not None}
+            if patch:
+                parsed={'action':'document_update','data':{'patch':patch}}
+                parsed=improve_document_nlu(text,parsed,draft)
         action=parsed.get('action');d=parsed.get('data',{})
         self.db.audit(self.s.owner_id,action)
         attachment=None
@@ -618,12 +698,17 @@ class Engine:
             draft=self.db.get_draft(self.s.owner_id)
             answer=self._document_preview(draft) if draft else 'Tidak ada draft dokumen.'
         elif action=='document_confirm':
-            if re.search(r'\b(setuju|konfirmasi|sesuai|buat(?:kan)?\s+pdf|generate\s+pdf|iya|nggih)\b',low):
+            if low in ('sudah sesuai','sudah sesuai buat pdf','sudah sesuai, buat pdf',
+                       'setuju buat pdf','buat pdf','generate pdf','iya buat pdf',
+                       'oke buat pdf','nggih leres buat pdf','konfirmasi dokumen'):
                 answer,attachment=self._finalize()
             else:
                 answer='Untuk membuat PDF, balas secara eksplisit: sudah sesuai, buat PDF.'
         elif action=='document_cancel':
-            self.db.delete_draft(self.s.owner_id);answer='Draft dokumen dibatalkan.'
+            if low in ('batal','batalkan','/batal','/cancel','batal dokumen',
+                       'batalkan invoice','batalkan penawaran','jangan jadi','ora dadi'):
+                self.db.delete_draft(self.s.owner_id);answer='Draft dokumen dibatalkan.'
+            else:answer='Perintah pembatalan tidak jelas. Draft tidak diubah.'
         elif action=='help':answer=HELP
         elif action=='chat':
             try:answer=self.ai.converse(text,history,draft)
