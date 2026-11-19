@@ -1,3 +1,4 @@
+# TOSBOT-DOCUMENT-INTENT-HOTFIX-20261119
 """Template-accurate PDF renderer for the user's two distinct Excel examples.
 
 The original quotation is Times New Roman and includes a handwritten signature,
@@ -193,13 +194,17 @@ def _offer_details(c, draft, number, cfg, when, fonts):
     _draw(c, ':', 57, 160, serif, 8.8)
     _draw(c, 'Penawaran Harga', 63, 160, serif, 8.8)
     _draw(c, 'Kepada Yth.', 23, 193, serif, 9)
+    y = 205
     attention = str(draft.get('attention') or '').strip()
     if attention:
-        _text_block(c, attention, 23, 205, 455, serif, 9, 11)
-    cust_y = 217 if attention else 205
-    _text_block(c, draft.get('customer') or '', 23, cust_y, 500, serif, 9, 11)
-    _draw(c, 'Adapun rinciannya sebagai berikut :', 23, 260, serif, 9)
-
+        y += _text_block(c, attention, 23, y, 455, serif, 9, 11)
+    y += _text_block(c, draft.get('customer') or '', 23, y, 500, serif, 9, 11)
+    address = str(draft.get('customer_address') or '').strip()
+    if address:
+        y += _text_block(c, address, 23, y + 2, 535, serif, 8.7, 11) + 2
+    intro = max(260, y + 16)
+    _draw(c, 'Adapun rinciannya sebagai berikut :', 23, intro, serif, 9)
+    return intro + 7
 
 def _offer_table(c, items, first_top, fonts, start_number=1):
     serif, bold = fonts['serif'], fonts['serif_bold']
@@ -296,8 +301,7 @@ def _offer(c, draft, number, cfg, when, fonts):
         page += 1
         _offer_header(c,cfg,when,fonts,continuation=page>1)
         if page == 1:
-            _offer_details(c,draft,number,cfg,when,fonts)
-            y = 267
+            y = _offer_details(c,draft,number,cfg,when,fonts)
         else:
             _draw(c,'No : '+number,23,190,fonts['serif'],8.5)
             _draw(c,'Kepada Yth. '+str(draft.get('customer') or ''),23,203,fonts['serif'],8.7)
@@ -373,7 +377,9 @@ def _invoice_details(c,draft,number,when,fonts):
     yy=211
     if draft.get('attention'):
         yy+=_text_block(c,draft['attention'],44,yy,290,sans,8,10)
-    _text_block(c,draft.get('customer') or '',44,yy,310,bold,8,10)
+    yy += _text_block(c,draft.get('customer') or '',44,yy,310,bold,8,10)
+    if draft.get('customer_address'):
+        _text_block(c,draft['customer_address'],44,yy,310,sans,7.7,9)
     fields=[
         ('NO',number),('Tanggal',date_id(when)),
         ('PO Customer',draft.get('po_number') or ''),('Mata Uang',draft.get('currency') or 'IDR'),
