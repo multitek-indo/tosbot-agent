@@ -54,12 +54,17 @@ class AdminBrokerTests(unittest.TestCase):
             with patch.object(helper,'ROOT',Path(td)/'jobs'),patch.object(helper,'bot_only'),\
                  patch.object(helper,'read_packet',return_value={
                      'mode':'limited','command':'pwd','cwd':'/home'}),\
-                 patch.object(helper.subprocess,'run',return_value=dummy):
+                 patch.object(helper.subprocess,'run',return_value=dummy),\
+                 patch.object(helper.os,'chown') as mock_chown:
                 with contextlib.redirect_stdout(io.StringIO()) as stdout:
                     helper.submit()
                 result=json.loads(stdout.getvalue())
                 self.assertTrue(result['ok'])
                 self.assertEqual(result['mode'],'limited')
+                # CI runs as non-root. Assert the root ownership request without
+                # performing a privileged chown on the test runner.
+                mock_chown.assert_called_once_with(helper.ROOT, 0, 0)
+                self.assertEqual(os.stat(helper.ROOT).st_mode & 0o777, 0o700)
                 j=helper.ROOT/(result['job_id']+'.json')
                 self.assertEqual(os.stat(j).st_mode & 0o777,0o600)
                 self.assertEqual(helper.read_json(j)['command'],'pwd')
