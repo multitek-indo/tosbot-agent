@@ -1,3 +1,13 @@
+## v1.12.3 — 2026-11-19
+
+- Perbaikan interpretasi instruksi penawaran/invoice dalam bahasa Indonesia, termasuk koreksi singkat dan typo jumlah unit.
+- Memisahkan alamat pelanggan (`customer_address`) dari keterangan item di rancangan dan PDF.
+- Mencegah penambahan item tidak disengaja ketika pengguna hanya mengubah alamat atau keterangan.
+- Memisahkan permintaan dokumen baru dari draft dan riwayat percakapan sebelumnya; memperketat konfirmasi dan pembatalan dokumen.
+- Menambahkan pemeriksaan regresi untuk ekstraksi nama pelanggan, PIC, alamat, jumlah, harga dan catatan servis.
+- Dashboard tetap v0.3.0; tidak ada migrasi database atau perubahan kunci, token, maupun aset privat.
+- Pengujian unit lokal dan validasi publikasi source bukan pengganti uji Telegram/PDF pada lingkungan produksi.
+
 ## v1.12.2 — Telegram + Dashboard integration
 
 - Query terstruktur pelanggan, servis, foto, finance, dan dokumen dari data dashboard tanpa menebak dengan AI.
