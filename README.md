@@ -9,6 +9,10 @@ TosBot adalah asisten operasional berbasis Telegram untuk mengelola VPS dan peke
 
 > **Status:** README ini menjelaskan source **v1.13.0/v0.3.0**. Fitur integrasi membutuhkan **kedua aplikasi** terpasang dan dihubungkan menggunakan `connect_telegram.sh`. Kode yang sudah di-push ke GitHub tidak otomatis memasang pembaruan pada VPS lain.
 
+## Panduan teknisi (Bahasa Indonesia)
+
+[**Buku panduan teknisi TosBot v1.13.0**](docs/TECHNICIAN_GUIDE_ID.md) — instalasi VPS baru, konfigurasi, perintah Telegram/Linux, maintenance, backup/restore, migrasi, troubleshooting, keamanan dan publikasi GitHub.
+
 ## Daftar isi
 
 - [Fitur](#fitur)
