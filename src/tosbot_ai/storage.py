@@ -27,6 +27,10 @@ class Store:
             id INTEGER PRIMARY KEY AUTOINCREMENT, owner INTEGER NOT NULL, kind TEXT NOT NULL,
             number TEXT NOT NULL UNIQUE, customer TEXT NOT NULL,
             path TEXT NOT NULL, total INTEGER NOT NULL, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS document_memory (
+            number TEXT PRIMARY KEY, owner INTEGER NOT NULL, kind TEXT NOT NULL,
+            payload TEXT NOT NULL, created_at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_doc_memory_owner ON document_memory(owner,kind,created_at);
         CREATE TABLE IF NOT EXISTS audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT, actor INTEGER NOT NULL, action TEXT NOT NULL,
             detail TEXT NOT NULL, ts INTEGER NOT NULL);
@@ -82,10 +86,19 @@ class Store:
     def mark_sent(self,id):
         with self.db: self.db.execute('UPDATE reminders SET state=? WHERE id=?',('sent',id))
 
-    def reserve_number(self,owner,kind,customer,path,total,number):
+    def reserve_number(self,owner,kind,customer,path,total,number,memory=None):
         with self.db:
             self.db.execute('INSERT INTO documents(owner,kind,number,customer,path,total,created_at) VALUES(?,?,?,?,?,?,?)',
                             (owner,kind,number,customer,str(path),total,int(time.time())))
+
+            if memory is not None:
+                self.db.execute('INSERT INTO document_memory VALUES(?,?,?,?,?)',
+                                (number,owner,kind,json.dumps(memory,ensure_ascii=False),int(time.time())))
+                self.db.execute('DELETE FROM drafts WHERE owner=?',(owner,))
+
+    def recall_documents(self,owner,kind):
+        rows=self.db.execute('SELECT number,payload FROM document_memory WHERE owner=? AND kind=? ORDER BY rowid DESC',(owner,kind)).fetchall()
+        return [(r['number'],json.loads(r['payload'])) for r in rows]
 
     def next_number(self,kind,year):
         prefix='INV' if kind=='invoice' else 'PEN'

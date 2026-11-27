@@ -1,3 +1,12 @@
+## v1.13.0 — 2026-11-27
+
+- Perbaiki pemetaan nomor invoice, PO customer, PIC dan perusahaan; pratinjau PO terpisah.
+- Tambah memori lokal dokumen final per owner/chat, tanpa mengirim arsip ke model AI.
+- Salin invoice/penawaran sebelumnya berdasarkan nama pelanggan/PIC atau dokumen terakhir, dengan koreksi jumlah/harga untuk satu item dan PO baru.
+- Tolak referensi ambigu, perubahan yang tidak dikenali, dan penimpaan draft aktif dalam alur salin.
+- Simpan nomor, snapshot, dan hapus draft dalam transaksi SQLite yang sama saat finalisasi; konfirmasi ulang tanpa draft tidak membuat PDF baru.
+- Normalisasi beberapa variasi perintah pembuatan dokumen Indonesia/Jawa/typo. Dashboard tetap v0.3.0; izin terminal dan admin tidak berubah.
+
 ## v1.12.3 — 2026-11-19
 
 - Perbaikan interpretasi instruksi penawaran/invoice dalam bahasa Indonesia, termasuk koreksi singkat dan typo jumlah unit.

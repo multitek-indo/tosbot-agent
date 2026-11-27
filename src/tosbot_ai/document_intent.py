@@ -161,6 +161,73 @@ def scrub_address_from_items(items: Any, address: str | None) -> None:
         item['note'] = note
 
 
+# Document identifiers are different business fields, never aliases.
+_PO_LABEL = r'(?:nomor\s+|no\.?\s+)?(?:po(?:\s+(?:customer|pelanggan))?|purchase\s+order(?:\s+customer)?)'
+_INV_LABEL = r'(?:nomor|no\.?)\s+(?:invoice|faktur)'
+_ID_VALUE = r'([A-Za-z0-9][A-Za-z0-9/_.-]{0,79})(?![A-Za-z0-9/_.-])'
+_ID_SEP = r'\s*(?:[:=]\s*|(?:jadi|menjadi|adalah|ke)\s+|\s+)'
+
+
+def _explicit_id(message: str, label: str) -> str | None:
+    # Require a digit to avoid treating ordinary prose as an identifier.
+    matches = re.finditer(r'(?i)\b' + label + _ID_SEP + _ID_VALUE, message or '')
+    values = [m.group(1).rstrip('.') for m in matches
+              if any(c.isdigit() for c in m.group(1))
+              and not re.search(r'(?i)\b(?:tgl\.?|tanggal)\s+$', (message or '')[:m.start()])]
+    return values[0] if len(set(values)) == 1 else None
+
+
+def invoice_header_patch(message: str, old_draft: dict | None = None) -> dict:
+    po = _explicit_id(message, _PO_LABEL)
+    number = _explicit_id(message, _INV_LABEL)
+    fields = {}
+    if po:
+        fields['po_number'] = po
+        # Repair an active draft where this exact PO was placed in NO.
+        if (old_draft or {}).get('number') == po and not number:
+            fields['number'] = ''
+    if number:
+        fields['number'] = number
+    elif re.search(r'(?i)\b' + _INV_LABEL + r'\s*(?:[:=]\s*)?(?:jadi\s+|menjadi\s+)?otomatis\b', message):
+        fields['number'] = ''
+    return fields
+
+
+def invoice_header_only(message: str, old_draft: dict) -> dict | None:
+    # Bypass the model for a simple, unambiguous header correction only.
+    text = re.sub(r'^\s*@[-_\w]+\s+', '', message or '').strip()
+    if re.fullmatch(r'(?i)(?:(?:tolong|koreksi|ganti|ubah|isi|masukkan|tambahkan|ralat|set)\s+)*'
+                    + r'(?:' + _PO_LABEL + '|' + _INV_LABEL + ')' + _ID_SEP
+                    + r'(?:' + _ID_VALUE + r'|otomatis)\s*[.!]?', text):
+        return invoice_header_patch(text, old_draft) or None
+    return None
+
+
+def _company_and_pic(message: str) -> dict:
+    # Limit parsing to the header, never use a company name in item notes.
+    head = re.split(r'(?i)\balamat\b|\b\d+\s*(?:unit|pcs|buah)\b|\b(?:harga|seharga|rincian|biaya)\b', message, maxsplit=1)[0]
+    company = re.search(r'(?i)\b(PT\.?\s+[\w][\w .&-]{1,90}?)(?=\s+(?:kepada|untuk|pic|attention|attn|dengan|nomor|no\.?\s|po\b)|[,;\n]|$)', head)
+    pic = re.search(r'(?i)\b(mr|mrs|ms)\.?\s*([\w-]+(?:\s+[\w-]+){0,2}?)(?=\s+(?:di\s+)?PT\.?\s|\s+(?:pelanggan|customer|dengan|nomor|po)\b|[,;\n]|$)', head)
+    fields = {}
+    if company:
+        fields['customer'] = company.group(1).strip(' .,')
+    if pic:
+        fields['attention'] = pic.group(1).title() + '. ' + pic.group(2).strip()
+    return fields
+
+
+def _guard_invoice_header(message: str, data: dict, old_draft: dict | None) -> None:
+    explicit = invoice_header_patch(message, old_draft)
+    # No model-generated internal serial or PO without explicit evidence.
+    data.pop('number', None)
+    data.pop('po_number', None)
+    data.update(explicit)
+    # Override NLU only when both recipient and company are explicit.
+    recipient = _company_and_pic(message)
+    if len(recipient) == 2:
+        data.update(recipient)
+
+
 def improve_document_nlu(message: str, parsed: dict, old_draft: dict | None) -> dict:
     """Enforce explicit customer address, service and note with conservative edits.
 
@@ -181,6 +248,8 @@ def improve_document_nlu(message: str, parsed: dict, old_draft: dict | None) -> 
         data = {}
         parsed['data'] = data
     if action == 'document_create':
+        if data.get('doc_type') == 'invoice':
+            _guard_invoice_header(message, data, None)
         if not terms_explicit:
             data.pop('terms', None)  # reject unrequested LLM-invented business terms
         if address:
@@ -199,6 +268,8 @@ def improve_document_nlu(message: str, parsed: dict, old_draft: dict | None) -> 
     if not isinstance(patch, dict):
         patch = {}
         data['patch'] = patch
+    if (old_draft or {}).get('type') == 'invoice':
+        _guard_invoice_header(message, patch, old_draft)
     if not terms_explicit:
         patch.pop('terms', None)
         patch.pop('terms_add', None)
@@ -265,11 +336,11 @@ def fallback_simple_document(message: str) -> dict | None:
     # Extract only the first line item; multi-item cases should use the LLM.
     item = re.search(r'(?i)\b(?:(biaya\s+)?(service|servis|perbaikan)\s+)?'
                      r'(\d{1,5})\s*(?:unit|unut|unot|pcs|buah)\s+'
-                     r'(.+?)\s+harga\s+(?:rp\.?\s*)?(\d[\d.,]*\s*(?:juta|jt|ribu|rb)?)\b', msg)
+                     r'(.+?)\s+(?:se)?harga\s+(?:rp\.?\s*)?(\d[\d.,]*\s*(?:juta|jt|ribu|rb)?)\b', msg)
     if not item:
         return None
     # Only a clearly single line item can bypass an unreliable LLM.
-    if len(re.findall(r'(?i)\bharga\b', msg)) != 1:
+    if len(re.findall(r'(?i)\b(?:se)?harga\b', msg)) != 1:
         return None
     qty = int(item.group(3))
     price = single_price_reply('harga ' + item.group(5))
@@ -291,4 +362,6 @@ def fallback_simple_document(message: str) -> dict | None:
     note = requested_item_note(msg)
     if note:
         result['data']['items'][0]['note'] = note
+    if dtype == 'invoice':
+        _guard_invoice_header(msg, result['data'], None)
     return result

@@ -39,7 +39,14 @@ Jika ada draft berstatus collecting dan pengguna menjawab singkat, jawab informa
 ditanyakan sebelumnya; gunakan field pending_item untuk melengkapi, BUKAN menambah baris baru.
 Jika user mengatakan PIC Bu Nurul, 'Bu Nurul' adalah attention/PIC penerima, BUKAN
 keterangan item; berlaku juga PIC pak Agus, u.p. Bapak Arif, untuk Ibu Siti.
-Jika hanya mengubah satu kolom, gunakan item_changes dan pertahankan kolom lain.
+Khusus invoice: number adalah nomor invoice internal (kolom NO), bukan nomor PO.
+Nomor PO, no PO, PO customer, purchase order selalu masuk po_number. Jangan mengisi number
+kecuali user secara eksplisit meminta nomor invoice/faktur tertentu; jika tidak, null agar backend
+memberi nomor otomatis. Tanggal PO masuk po_date, bukan nomor invoice.
+Contoh: "invoice kepada Mr.Jess di PT Sumbiri dengan nomor PO customer POSMG26001305"
+=> customer="PT Sumbiri", attention="Mr. Jess", po_number="POSMG26001305", number=null.
+Jika user meminta koreksi PO saja, patch po_number, bukan number atau item.
+Jika hanya mengubah satu kolom item, gunakan item_changes dan pertahankan kolom lain.
 Ketentuan penawaran adalah field terms, sedangkan keterangan di tabel adalah note item.
 Alamat pelanggan/penerima harus masuk field customer_address; jangan masukkan alamat ke item.note.
 Jika user bilang "tambahkan alamat di bawah PT ...", itu update alamat customer, bukan item baru.
@@ -117,9 +124,10 @@ reminder_add: {title:string,due:'YYYY-MM-DDTHH:MM:SS'|null}.
 document_create: {doc_type:'invoice'|'offer',customer:string|null,attention:string|null,
                     customer_address:string|null,
                    items:[{name?:string,qty?:integer,unit?:string,price?:integer,note?:string}],
-                   terms:string|null, number:string|null, discount:integer|null}.
+                   terms:string|null, number:string|null, po_number:string|null, po_date:string|null,
+                   payment_type:string|null, discount:integer|null}.
 document_update: {patch: {customer?:str,attention?:str,customer_address?:str,number?:str,po_number?:str,
-                   payment_type?:str,discount?:integer,terms?:str,terms_add?:str,
+                   po_date?:str,payment_type?:str,discount?:integer,terms?:str,terms_add?:str,
                    items?:[{name?:str,qty?:integer,unit?:str,price?:integer,note?:str}],item_mode?:'add'|'replace',target_index?:integer,
                    item_changes?:{name?:str,qty?:integer,unit?:str,price?:integer,note?:str}}}.
 

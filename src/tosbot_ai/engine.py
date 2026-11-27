@@ -10,12 +10,14 @@ from .config import Settings
 from .documents import currency,make_pdf,total,valid_item
 from .server import disk,memory,service_status,restart_service,status,validate_service
 from .storage import Store
+from .document_memory import normalize_create, reuse_request, name_key, snapshot, reuse_data
 from .conversation import ConversationGraph, _safe_memory
 from .directory_agent import DirectoryAgent, parse_directory_command, safe_path, CONFIRMATIONS, DIR_ROOT, HOME_ROOT
 from .network_agent import parse_ping, ping_private
 from .document_intent import (is_new_document_request, single_quantity,
     customer_address, requested_item_note, single_price_reply,
-    improve_document_nlu, scrub_address_from_items, fallback_simple_document)
+    improve_document_nlu, scrub_address_from_items, fallback_simple_document,
+    invoice_header_only, invoice_header_patch)
 # TOSBOT-DOCUMENT-INTENT-HOTFIX-20261119
 
 log=logging.getLogger(__name__)
@@ -92,7 +94,10 @@ class Engine:
         dtype='PENAWARAN' if d['type']=='offer' else 'INVOICE'
         lines=[f'📄 Rancangan {dtype}',f'Pelanggan: {d.get("customer") or "[belum diisi]"}',
                f'PIC/penerima: {d.get("attention") or "[belum disebutkan]"}',
-               'Nomor: '+(d.get('number') or '[otomatis setelah final]')]
+               ('Nomor invoice: ' if d['type']=='invoice' else 'Nomor: ')+(d.get('number') or '[otomatis setelah final]')]
+        if d['type']=='invoice':
+            lines.append('PO Customer: '+str(d.get('po_number') or '[belum diisi]'))
+            lines.append('Tgl PO: '+str(d.get('po_date') or '[belum diisi]'))
         if d.get('customer_address'):
             lines.append('Alamat pelanggan: '+str(d['customer_address']))
         for idx,x in enumerate(d.get('items',[]),1):
@@ -107,7 +112,6 @@ class Engine:
         if d.get('terms'):lines.append('Ketentuan:\n'+str(d['terms']))
         if d['type']=='invoice':
             lines.append('Pembayaran: '+str(d.get('payment_type') or 'belum diatur'))
-            if d.get('po_number'):lines.append('PO Customer: '+str(d['po_number']))
         if required:
             d['status']='collecting'
             if 'customer' in required:
@@ -247,13 +251,12 @@ class Engine:
         path=self.s.out_dir/f'{d["type"]}-{now.strftime("%Y%m%d")}-{safe_id}.pdf'
         try:
             make_pdf(d,number,path,self.s,now)
-            self.db.reserve_number(self.s.owner_id,d['type'],d['customer'],path,total(d),number)
+            self.db.reserve_number(self.s.owner_id,d['type'],d['customer'],path,total(d),number,memory=snapshot(d))
         except Exception as exc:
             try:path.unlink(missing_ok=True)
             except OSError:pass
             log.exception('document save failed')
             return 'Gagal membuat PDF. Cek apakah nomor dokumen sudah dipakai atau folder penyimpanan tersedia.',None
-        self.db.delete_draft(self.s.owner_id)
         self.db.audit(self.s.owner_id,'document_created',f'{d["type"]} {number}')
         return f'✅ PDF {d["type"]} {number} selesai. Total {currency(total(d))}.',path
 
@@ -518,6 +521,21 @@ class Engine:
             return 'Direktori mana yang ingin dilihat? Contoh: home, script, atau ai-agent.'
         return None
 
+    def _reuse_document(self,request:dict,draft:dict|None)->str:
+        if request.get('error'): return request['error']
+        if draft: return 'Masih ada draft aktif. Selesaikan atau batalkan dengan /batal sebelum menyalin dokumen lama.'
+        rows=self.db.recall_documents(self.s.owner_id,request['kind'])
+        if request['recipient']:
+            key=name_key(request['recipient'])
+            rows=[(n,d) for n,d in rows if key and key in (name_key(d['customer']),name_key(d.get('attention','')))]
+            if len({name_key(d['customer']) for _,d in rows})>1:
+                return 'Nama PIC ditemukan pada beberapa pelanggan. Sebutkan nama perusahaan lengkap.'
+        if not rows: return 'Belum ada dokumen final yang cocok dalam memori chat ini. Buat dokumen baru dengan rincian lengkap.'
+        number,record=rows[0]
+        data=reuse_data(record,request)
+        if data is None: return 'Dokumen lama memiliki beberapa item atau data tidak valid. Salin tanpa perubahan jumlah/harga, lalu sebutkan nomor item.'
+        return ('📋 Data dari '+number+'. Periksa ulang harga, jumlah, alamat dan pembayaran. PO, diskon, ketentuan dan nomor lama tidak disalin.\n\n'+self._create_draft(data))
+
     def handle(self,text:str)->tuple[str,Path|None]:
         text=text.strip()
         if not text:return 'Kirim pesan teks, ya.',None
@@ -572,7 +590,7 @@ class Engine:
                 self._set_state('pending_admin',None)
                 self.db.audit(self.s.owner_id,'service_restart',pending['service'])
                 return restart_service(self.s,pending['service']),None
-        if draft and low in ('sudah sesuai','sudah sesuai buat pdf','sudah sesuai, buat pdf',
+        if low in ('sudah sesuai','sudah sesuai buat pdf','sudah sesuai, buat pdf',
                             'setuju buat pdf','buat pdf','generate pdf','iya buat pdf',
                             'oke buat pdf','nggih leres buat pdf','konfirmasi dokumen'):
             return self._finalize()
@@ -581,11 +599,23 @@ class Engine:
             return 'Draft dokumen dibatalkan.',None
         # An explicit 'buatkan penawaran ...' always starts a FRESH document.
         # Do not feed an old LangGraph checkpoint into that independent request.
+        reuse = reuse_request(text)
+        if reuse is not None:
+            answer=self._reuse_document(reuse,draft)
+            self._remember(text,answer)
+            return answer,None
+        text=normalize_create(text)
         fresh_doc = is_new_document_request(text)
         if draft and not fresh_doc:
+            header_fields = {}
+            if draft.get('type') == 'invoice':
+                header = invoice_header_only(text, draft)
+                if header:
+                    return self._patch_draft(header), None
+                header_fields = invoice_header_patch(text, draft)
             address = customer_address(text)
             if address and not re.search(r'(?i)\b(?:rincian|biaya\s+(?:service|servis)|harga\s+\d+|harga\s+rp)\b', text):
-                return self._patch_draft({'customer_address': address}), None
+                return self._patch_draft({'customer_address': address, **header_fields}), None
             pending_item = draft.get('pending_item') or {}
             qty = single_quantity(text, allow_bare=bool(pending_item))
             if qty is not None:
@@ -608,9 +638,9 @@ class Engine:
             note = requested_item_note(text)
             if note and not re.search(r'(?i)\b(?:harga|rincian|buatkan|buat\s+penawaran)\b', text):
                 if len(draft.get('items') or []) == 1 and not draft.get('pending_item'):
-                    return self._patch_draft({'target_index':1,'item_changes':{'note':note}}), None
+                    return self._patch_draft({'target_index':1,'item_changes':{'note':note}, **header_fields}), None
                 if draft.get('pending_item'):
-                    return self._patch_draft({'items':[{'note':note}]}), None
+                    return self._patch_draft({'items':[{'note':note}], **header_fields}), None
         history=self._history()
         try:
             if fresh_doc:
@@ -628,7 +658,7 @@ class Engine:
                     payload=payload if isinstance(payload,dict) else {}
                     extracted=payload.get('items')
                     expected=safe_fallback['data']['items'][0]
-                    if (not isinstance(extracted,list) or len(extracted)!=1 or
+                    if (parsed.get('action') != 'document_create' or not isinstance(extracted,list) or len(extracted)!=1 or
                             not isinstance(extracted[0],dict) or
                             extracted[0].get('qty') != expected['qty'] or
                             extracted[0].get('price') != expected['price'] or
