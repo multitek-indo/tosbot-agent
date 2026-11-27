@@ -92,7 +92,7 @@ def main():
         print(k+':', 'ADA' if ok else 'BELUM DIISI/INVALID')
     for name, keyvar, modelvar, urlvar, default_model, default_url in (
         ('groq','GROQ_API_KEY','GROQ_MODEL','GROQ_BASE_URL','openai/gpt-oss-120b','https://api.groq.com/openai/v1'),
-        ('gemini','GEMINI_API_KEY','GEMINI_MODEL','GEMINI_BASE_URL','gemini-2.5-flash','https://generativelanguage.googleapis.com/v1beta/openai')):
+        ('gemini','GEMINI_API_KEY','GEMINI_MODEL','GEMINI_BASE_URL','gemini-3.1-flash-lite','https://generativelanguage.googleapis.com/v1beta/openai')):
         model=cfg.get(modelvar,default_model)
         url=cfg.get(urlvar,default_url)
         print(name.upper()+'_MODEL:',model)

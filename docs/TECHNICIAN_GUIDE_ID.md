@@ -1,10 +1,10 @@
 # Buku panduan teknisi TosBot AI Agent
 
-**Acuan:** TosBot AI Agent v1.13.0 · MULTITEK Operations Dashboard v0.3.0
-**Baseline Git:** `3c77116` (tag `v1.13.0`) · November 2026
+**Acuan:** TosBot AI Agent v1.13.1 · MULTITEK Operations Dashboard v0.3.0
+**Baseline fitur:** `3c77116` (tag `v1.13.0`), dengan pembaruan default Gemini v1.13.1 · November 2026
 **Sasaran:** teknisi Linux, pengelola VPS, administrator Telegram dan dashboard.
 
-Panduan ini berdasarkan source v1.13.0 dan hasil pengujian upgrade VPS: 13 tes upgrade lulus, suite publikasi 109 lulus dari 110, satu tes visual PDF dilewati karena PyMuPDF tidak terpasang; LangGraph persistence lulus. Push branch `main` dan tag berhasil. Status halaman GitHub Release harus diperiksa terpisah. Instalasi bersih di VPS kedua belum diuji langsung; lakukan checklist penerimaan sebelum produksi. Versi dashboard adalah versi source, bukan bukti dashboard aktif di setiap VPS. Dokumen ini mengutamakan konfigurasi aman untuk pemasangan baru, bukan menyalin izin produksi tanpa pemeriksaan.
+Panduan ini berdasarkan source v1.13.0 dengan pembaruan konfigurasi default v1.13.1. Hasil pengujian upgrade v1.13.0 pada VPS: 13 tes upgrade lulus, suite publikasi 109 lulus dari 110, satu tes visual PDF dilewati karena PyMuPDF tidak terpasang; LangGraph persistence lulus. Push branch `main` dan tag berhasil. Status halaman GitHub Release harus diperiksa terpisah. Instalasi bersih di VPS kedua belum diuji langsung; lakukan checklist penerimaan sebelum produksi. Versi dashboard adalah versi source, bukan bukti dashboard aktif di setiap VPS. Dokumen ini mengutamakan konfigurasi aman untuk pemasangan baru, bukan menyalin izin produksi tanpa pemeriksaan.
 
 ## Daftar isi
 
@@ -91,13 +91,13 @@ sudo git clone https://github.com/multitek-indo/tosbot-agent.git \
   /home/tosbot/script/ai-agent/tosbot-agent-public
 cd /home/tosbot/script/ai-agent/tosbot-agent-public
 sudo git fetch --tags origin
-sudo git checkout --detach v1.13.0
+sudo git checkout --detach v1.13.1
 cat VERSION
 cat dashboard/VERSION
 sudo git rev-parse --short HEAD
 ```
 
-Expected: `1.13.0`, `0.3.0`, commit tag sesuai repository. Jika repo privat, pakai akses baca yang sah; tidak perlu Deploy Key tulis pada VPS yang hanya menjalankan aplikasi. Jika target sudah ada, jangan clone di atasnya; periksa `git status` atau gunakan direktori baru. `detached HEAD` normal pada deployment tag. Tag ini tetap dapat dipakai walau halaman Release belum dibuat.
+Expected: `1.13.1`, `0.3.0`, commit tag sesuai repository. Jika repo privat, pakai akses baca yang sah; tidak perlu Deploy Key tulis pada VPS yang hanya menjalankan aplikasi. Jika target sudah ada, jangan clone di atasnya; periksa `git status` atau gunakan direktori baru. `detached HEAD` normal pada deployment tag. Tag ini tetap dapat dipakai walau halaman Release belum dibuat.
 
 ### 2.3 Instal agent
 
@@ -116,7 +116,7 @@ PYTHONPATH=/opt/tosbot-ai/src /opt/tosbot-ai/venv/bin/python \
   -c 'import tosbot_ai; print(tosbot_ai.__version__)'
 ```
 
-Expected: `active (running)`, `1.13.0`, log startup serta LangGraph enabled. Status running saja tidak membuktikan Telegram/AI berhasil; uji `/help`, `/status`, dan pertanyaan natural. Pada VPS baru tanpa kebutuhan dashboard, bagian 4 bisa dilewati.
+Expected: `active (running)`, `1.13.1`, log startup serta LangGraph enabled. Status running saja tidak membuktikan Telegram/AI berhasil; uji `/help`, `/status`, dan pertanyaan natural. Pada VPS baru tanpa kebutuhan dashboard, bagian 4 bisa dilewati.
 
 ## 3. Telegram, AI dan identitas perusahaan
 
@@ -131,7 +131,7 @@ GROQ_API_KEY=
 GROQ_MODEL=openai/gpt-oss-120b
 GROQ_BASE_URL=https://api.groq.com/openai/v1
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.1-flash-lite
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 AI_PRIMARY=groq
 AI_TIMEOUT=40
@@ -142,7 +142,7 @@ TELEGRAM_GROUP_OPERATIONS_ENABLED=false
 TELEGRAM_TRUSTED_GROUP_ADMIN=false
 ```
 
-Model di atas adalah default source, bukan jaminan ketersediaan provider pada masa mendatang. Isi token dan Groq key nyata secara privat; `AI_PRIMARY` wajib `groq`. `owner_id=0` adalah mode onboarding: kirim `/myid` di chat pribadi bot, isi ID numerik ke `TELEGRAM_OWNER_ID`, restart. Chat pribadi selain owner ditolak (kecuali `/myid`). Gemini fallback memerlukan key valid.
+Model di atas adalah default source, bukan jaminan ketersediaan provider pada masa mendatang. Isi token dan Groq key nyata secara privat; `AI_PRIMARY` wajib `groq`. `owner_id=0` adalah mode onboarding: kirim `/myid` di chat pribadi bot, isi ID numerik ke `TELEGRAM_OWNER_ID`, restart. Chat pribadi selain owner ditolak (kecuali `/myid`). Gemini fallback memerlukan key valid. Pada 27 November 2026, `gemini-3.1-flash-lite` lulus uji Chat Completions dan NLU contoh pada VPS, sedangkan `gemini-2.5-flash` memberi HTTP 404 meski tampil pada List Models. Untuk instalasi lama, env dipertahankan installer; ikuti [upgrade v1.13.1](../UPGRADE_V1131.md) untuk memperbarui model secara eksplisit.
 
 ```bash
 sudo chown root:tosbot-ai /etc/tosbot-ai/tosbot.env
@@ -450,7 +450,7 @@ cd /home/tosbot/script/ai-agent/tosbot-agent-public
 sudo git status --short
 sudo git fetch origin --tags
 # Gunakan tag yang telah ditinjau; contoh baseline:
-sudo git checkout --detach v1.13.0
+sudo git checkout --detach v1.13.1
 sudo systemctl stop tosbot-ai
 sudo bash install.sh
 sudo systemctl start tosbot-ai
@@ -472,9 +472,10 @@ Mulai dari gejala, cek log sejak kejadian terakhir (bukan hanya pesan lama), ide
 | Telegram HTTP 429 | Rate limit; biarkan backoff, kurangi frekuensi request, jangan restart berulang. |
 | Telegram 502 / ReadTimeout / ConnectError | Bisa gangguan upstream atau DNS/jaringan lokal; cek konektivitas dan log baru, retry otomatis. |
 | AI unavailable / 401 / 403 | `doctor.py --test-api`, cek Groq key, model, quota/izin; Gemini opsional. Jangan menaruh key di log. |
+| Gemini HTTP 404 | List Models saja tidak membuktikan kompatibilitas Chat Completions. Uji model kandidat dengan endpoint yang digunakan bot; default v1.13.1 adalah `gemini-3.1-flash-lite`. Lihat [upgrade v1.13.1](../UPGRADE_V1131.md). |
 | AI 429 / timeout | Kuota/rate limit, provider sedang sibuk; hindari request berulang, cek provider dan `AI_TIMEOUT`. |
 | LangGraph tidak aktif | Cek dependency di venv, izin checkpoint, `check_langgraph.py`; bot bisa fallback legacy history. |
-| PO masuk NO | Cek versi runtime 1.13.0, gunakan frasa `PO customer ...`, cek draft sebelum final, batalkan draft salah; jangan mengubah PDF final manual tanpa prosedur. |
+| PO masuk NO | Cek versi runtime minimal 1.13.0, gunakan frasa `PO customer ...`, cek draft sebelum final, batalkan draft salah; jangan mengubah PDF final manual tanpa prosedur. |
 | Memori tidak menemukan invoice | Harus ada dokumen final sesudah upgrade, jenis dan scope sama; nama/PIC tepat, bukan draft; PIC ambigu pakai perusahaan. |
 | Penawaran gagal render | Periksa aset tanda tangan, font, permission output, disk, log. Logo PDF berbeda dari dashboard. |
 | PDF lama tidak berubah | Normal; perubahan draft hanya untuk dokumen baru. |
@@ -504,7 +505,7 @@ HTTP status non-200 pada root URL API tidak otomatis berarti koneksi gagal: ini 
 
 ## 11. GitHub dan rilis
 
-Repository: <https://github.com/multitek-indo/tosbot-agent>. Commit kode v1.13.0 yang berhasil dipush: `3c77116`. Tag `v1.13.0` juga sudah diverifikasi melalui remote. Git tag bukan halaman GitHub Release; buat halaman Release dari tag bila belum tersedia, gunakan catatan release yang sudah disiapkan. Dokumentasi baru setelah tag tidak mengubah isi arsip v1.13.0: baca dokumentasi branch `main`, dan install kode dari tag. Tidak perlu membuat tag software baru untuk perubahan dokumentasi saja.
+Repository: <https://github.com/multitek-indo/tosbot-agent>. Commit kode v1.13.0 yang berhasil dipush: `3c77116`. Tag `v1.13.0` juga sudah diverifikasi melalui remote. Git tag bukan halaman GitHub Release; buat halaman Release dari tag bila belum tersedia, gunakan catatan release yang sudah disiapkan. Dokumentasi baru setelah tag tidak mengubah isi arsip v1.13.0. Untuk default Gemini terbaru gunakan tag v1.13.1 setelah tersedia; baca dokumentasi branch `main` sesuai versi runtime. Tidak perlu membuat tag software baru untuk perubahan dokumentasi saja.
 
 Pada VPS maintainer yang telah memiliki Deploy Key tulis, gunakan key tersebut tanpa menyalin private key ke server lain. Verifikasi fingerprint host melalui sumber resmi GitHub saat pertama kali terhubung, jangan menonaktifkan pemeriksaan host key. Bila key memiliki passphrase, masukkan secara interaktif atau gunakan ssh-agent. Deploy key tidak memberikan autentikasi GitHub API/CLI.
 
@@ -543,10 +544,10 @@ Catatan serah terima privat (di luar Git): hostname, IP Tailscale, lokasi clone,
 
 ### Referensi internal source
 
-- [README utama](../README.md), [CHANGELOG](../CHANGELOG.md), [upgrade v1.13.0](../UPGRADE_V113.md)
+- [README utama](../README.md), [CHANGELOG](../CHANGELOG.md), [upgrade v1.13.0](../UPGRADE_V113.md), [upgrade v1.13.1](../UPGRADE_V1131.md)
 - [Keamanan](../SECURITY.md), [trusted group (risiko tinggi)](../TRUSTED_GROUP_SETUP.md)
 - [Aset PDF privat](../assets/README.md), [dashboard v0.3.0](../dashboard/UPGRADE_V030.md)
 - [`install.sh`](../install.sh), [`audit-vps.sh`](../scripts/audit-vps.sh), [`doctor.py`](../scripts/doctor.py), [`check_langgraph.py`](../scripts/check_langgraph.py)
 - [`document_memory.py`](../src/tosbot_ai/document_memory.py), [`storage.py`](../src/tosbot_ai/storage.py), [`terminal.py`](../src/tosbot_ai/terminal.py), [tests](../tests/)
 
-Panduan ini mengutamakan perilaku source v1.13.0 apabila contoh historis di file lain berbeda. Untuk perubahan sesudah versi ini, perbarui dokumentasi bersama pengujian.
+Panduan ini mengutamakan perilaku source v1.13.1 apabila contoh historis di file lain berbeda. Untuk perubahan sesudah versi ini, perbarui dokumentasi bersama pengujian.

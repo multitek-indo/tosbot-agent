@@ -1,17 +1,17 @@
 # TosBot AI Agent + MULTITEK Operations Dashboard
 
-**Rilis terintegrasi:** TosBot AI Agent **v1.13.0** · Dashboard Web **v0.3.0**
+**Rilis terintegrasi:** TosBot AI Agent **v1.13.1** · Dashboard Web **v0.3.0**
 
 **Repository:** [multitek-indo/tosbot-agent](https://github.com/multitek-indo/tosbot-agent)  
 **Platform:** Ubuntu VPS · Telegram · Python · SQLite
 
 TosBot adalah asisten operasional berbasis Telegram untuk mengelola VPS dan pekerjaan bisnis. Dashboard web menyediakan tampilan untuk pelanggan, pekerjaan servis, foto barang/mesin, dokumen, keuangan, dan monitoring VPS. **Data pelanggan, tiket servis, dan foto yang dijawab TosBot diambil dari Dashboard melalui API lokal dengan akses baca saja**, sehingga bot tidak perlu menebak informasi tersebut.
 
-> **Status:** README ini menjelaskan source **v1.13.0/v0.3.0**. Fitur integrasi membutuhkan **kedua aplikasi** terpasang dan dihubungkan menggunakan `connect_telegram.sh`. Kode yang sudah di-push ke GitHub tidak otomatis memasang pembaruan pada VPS lain.
+> **Status:** README ini menjelaskan source **v1.13.1/v0.3.0**. Fitur integrasi membutuhkan **kedua aplikasi** terpasang dan dihubungkan menggunakan `connect_telegram.sh`. Kode yang sudah di-push ke GitHub tidak otomatis memasang pembaruan pada VPS lain.
 
 ## Panduan teknisi (Bahasa Indonesia)
 
-[**Buku panduan teknisi TosBot v1.13.0**](docs/TECHNICIAN_GUIDE_ID.md) — instalasi VPS baru, konfigurasi, perintah Telegram/Linux, maintenance, backup/restore, migrasi, troubleshooting, keamanan dan publikasi GitHub.
+[**Buku panduan teknisi TosBot v1.13.1**](docs/TECHNICIAN_GUIDE_ID.md) — instalasi VPS baru, konfigurasi, perintah Telegram/Linux, maintenance, backup/restore, migrasi, troubleshooting, keamanan dan publikasi GitHub.
 
 ## Daftar isi
 
@@ -31,7 +31,7 @@ TosBot adalah asisten operasional berbasis Telegram untuk mengelola VPS dan peke
 
 | Komponen | Kemampuan |
 |---|---|
-| **TosBot AI Agent v1.13.0** | Chat natural Bahasa Indonesia, Groq sebagai utama, Gemini cadangan, checkpoint LangGraph, perintah server, pengingat, keuangan, penawaran dan invoice PDF |
+| **TosBot AI Agent v1.13.1** | Chat natural Bahasa Indonesia, Groq sebagai utama, Gemini cadangan, checkpoint LangGraph, perintah server, pengingat, keuangan, penawaran dan invoice PDF |
 | **Telegram grup** | Mention `@bot` dan Reply langsung ke pesan bot; diagnostik grup terbatas; mode trusted group opsional |
 | **Dashboard v0.3.0** | Login multi-admin, pengaturan identitas perusahaan, logo *khusus web*, password minimal 10 karakter, sidebar auto-hide dan tema biru muda |
 | **Pelanggan & servis** | Pelanggan/PIC, mesin, kerusakan, teknisi, jadwal, status, estimasi pekerjaan |
@@ -41,7 +41,7 @@ TosBot adalah asisten operasional berbasis Telegram untuk mengelola VPS dan peke
 
 **Batasan saat ini:** pembuatan/perubahan data pelanggan dan pekerjaan servis dilakukan di dashboard; jembatan Telegram v1.12.2 untuk data tersebut **hanya-baca**. Transaksi yang berasal dari TosBot dapat tampil di dashboard setelah proses sinkronisasi, sehingga pembaruan tidak selalu seketika.
 
-## Memori dokumen final (v1.13.0)
+## Memori dokumen final (sejak v1.13.0)
 
 - `Buat invoice terakhir` atau `Buat invoice untuk PT Contoh seperti kemarin, jumlah 3 unit, PO baru PO-123`.
 - Data berasal dari dokumen final yang diterbitkan setelah upgrade, pada chat/owner yang sama. PIC ambigu memerlukan nama perusahaan lengkap.
@@ -53,7 +53,7 @@ TosBot adalah asisten operasional berbasis Telegram untuk mengelola VPS dan peke
 ```text
 tosbot-agent/
 ├── README.md                  # Dokumentasi utama ini
-├── VERSION                    # Versi agent: 1.13.0
+├── VERSION                    # Versi agent: 1.13.1
 ├── CHANGELOG.md
 ├── .env.example               # Contoh, tanpa kredensial nyata
 ├── install.sh                 # Installer TosBot
@@ -75,12 +75,13 @@ tosbot-agent/
     └── UPGRADE_V030.md        # Panduan integrasi terbaru
 ```
 
-Tag Git: **`v1.13.0`** untuk agent dan **`dashboard-v0.3.0`** untuk dashboard. Dashboard tidak berubah di v1.13.0; tag dashboard lama tidak perlu dibuat ulang. File dalam `dashboard/` **bukan** bagian dari instalasi service `tosbot-ai`; dashboard dipasang dan dijalankan sebagai service terpisah.
+Tag Git: **`v1.13.1`** untuk agent dan **`dashboard-v0.3.0`** untuk dashboard. Dashboard tidak berubah di v1.13.1; tag dashboard lama tidak perlu dibuat ulang. File dalam `dashboard/` **bukan** bagian dari instalasi service `tosbot-ai`; dashboard dipasang dan dijalankan sebagai service terpisah.
 
 ## Persyaratan
 
 - VPS Ubuntu dengan `sudo`, Python 3, dan akses Internet untuk memasang dependensi.
-- Token bot Telegram, ID pemilik, serta API key Groq; Gemini dapat digunakan sebagai cadangan.
+- Token bot Telegram, ID pemilik, serta API key Groq; Gemini dapat digunakan sebagai cadangan (default `gemini-3.1-flash-lite`).
+- Instalasi lama: installer mempertahankan env produksi. Ubah `GEMINI_MODEL` secara eksplisit bila masih menggunakan model lama, uji `doctor.py --test-api`, lalu restart. Lihat [panduan upgrade v1.13.1](UPGRADE_V1131.md).
 - Domain HTTPS + Cloudflare Access/MFA (disarankan) jika dashboard diakses melalui Internet. Alternatif: SSH/Tailscale tunnel.
 - Logo/tanda tangan asli untuk dokumen PDF, bila diperlukan. Aset privat ini disediakan **terpisah** dari repository publik.
 
@@ -98,8 +99,8 @@ sudo git clone https://github.com/multitek-indo/tosbot-agent.git \
   /home/tosbot/script/ai-agent/tosbot-agent-public
 cd /home/tosbot/script/ai-agent/tosbot-agent-public
 sudo git fetch --tags
-sudo git checkout v1.13.0
-cat VERSION                     # 1.13.0
+sudo git checkout v1.13.1
+cat VERSION                     # 1.13.1
 cat dashboard/VERSION           # 0.3.0
 ```
 
@@ -166,7 +167,7 @@ Di clone Git yang sudah ada, periksa perubahan lokal **sebelum** beralih versi. 
 cd /home/tosbot/script/ai-agent/tosbot-agent-public
 sudo git status --short
 sudo git fetch origin --tags
-sudo git checkout v1.13.0
+sudo git checkout v1.13.1
 sudo bash install.sh
 sudo bash dashboard/install.sh
 sudo bash /opt/tosbot-dashboard/scripts/connect_telegram.sh

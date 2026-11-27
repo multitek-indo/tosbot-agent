@@ -66,7 +66,7 @@ class Settings:
             logo_path=Path(env("TOSBOT_LOGO_PATH", str(base / "assets/logo.png"))),
             groq_key=env("GROQ_API_KEY"), groq_model=env("GROQ_MODEL", "openai/gpt-oss-120b"),
             groq_url=env("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
-            gemini_key=env("GEMINI_API_KEY"), gemini_model=env("GEMINI_MODEL", "gemini-2.5-flash"),
+            gemini_key=env("GEMINI_API_KEY"), gemini_model=env("GEMINI_MODEL", "gemini-3.1-flash-lite"),
             gemini_url=env("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
             ai_primary=env("AI_PRIMARY", "groq").lower(),
             timeout=max(8, min(120, int(env("AI_TIMEOUT", "40")))), tz=zone,

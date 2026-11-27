@@ -1,3 +1,10 @@
+## v1.13.1 — 2026-11-27
+
+- Default Gemini fallback menjadi `gemini-3.1-flash-lite` pada konfigurasi runtime, contoh env dan doctor.
+- Groq tetap utama; endpoint dan algoritma fallback tidak berubah.
+- Tambah tes konsistensi default dan dokumentasi troubleshooting HTTP 404.
+- Tidak ada perubahan schema database, dashboard v0.3.0 atau izin Telegram. Konfigurasi produksi lama tidak otomatis ditimpa.
+
 ## v1.13.0 — 2026-11-27
 
 - Perbaiki pemetaan nomor invoice, PO customer, PIC dan perusahaan; pratinjau PO terpisah.
